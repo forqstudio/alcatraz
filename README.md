@@ -347,7 +347,7 @@ Default password: `dev`
 ### Tests
 
 ```bash
-go test -v ./cmd/alcatraz-worker/...
+go test -v ./internal/...
 ```
 
 ## Shell Script (Alternative)
