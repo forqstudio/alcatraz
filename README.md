@@ -250,6 +250,20 @@ or directly:
 ./firecracker.sh
 ```
 
+### Using alcatraz-worker (Go application)
+
+You can also start the VM using the alcatraz-worker Go application. Build it first:
+
+```bash
+go build -o bin/alcatraz-worker .
+```
+
+Then run as root:
+
+```bash
+sudo ./bin/alcatraz-worker
+```
+
 Use a custom AgentFS overlay id:
 
 ```bash
