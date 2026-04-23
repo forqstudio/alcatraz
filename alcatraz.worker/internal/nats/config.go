@@ -33,7 +33,7 @@ func LoadConfig() (*Config, error) {
 	if v := os.Getenv("NATS_SUBJECT"); v != "" {
 		cfg.Subject = v
 	}
-	if v := os.Getenv("QUEUE_GROUP"); v != "" {
+	if v := os.Getenv("NATS_QUEUE_GROUP"); v != "" {
 		cfg.QueueGroup = v
 	}
 

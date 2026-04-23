@@ -31,7 +31,7 @@ func main() {
 			FirecrackerBin: vmCfg.FirecrackerBin,
 			Rootfs:         vmCfg.Rootfs,
 			Kernel:         vmCfg.Kernel,
-			AgentfsDir:     vmCfg.AgentfsDir,
+			AgentfsData:    vmCfg.AgentfsData,
 		}
 
 		ctx := context.Background()

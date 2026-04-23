@@ -14,7 +14,7 @@ type SpawnOptions struct {
 	FirecrackerBin string
 	Rootfs         string
 	Kernel         string
-	AgentfsDir     string
+	AgentfsData    string
 }
 
 func Spawn(
@@ -40,7 +40,7 @@ func Spawn(
 		VMIP:       FormatVMIP(index),
 		Subnet:     FormatSubnet(index),
 		NFSPort:    FormatNFSPort(index),
-		Socket:     FormatSocket(options.AgentfsDir, validatedReq.ID),
+		Socket:     FormatSocket(options.AgentfsData, validatedReq.ID),
 		AgentID:    validatedReq.ID,
 	}
 
@@ -57,7 +57,7 @@ func Spawn(
 		return nil, fmt.Errorf("setup nat: %w", err)
 	}
 
-	if err := PrepareAgentfsOverlay(instance, options.AgentfsBin, options.Rootfs, options.AgentfsDir); err != nil {
+	if err := PrepareAgentfsOverlay(instance, options.AgentfsBin, options.Rootfs, options.AgentfsData); err != nil {
 		CleanupInstance(instance)
 		instanceManager.Release(index)
 		return nil, fmt.Errorf("prepare agentfs: %w", err)

@@ -16,7 +16,7 @@ const (
 	FirecrackerBin = "../alcatraz.core/bin/firecracker-v1.15.1"
 	KernelPath     = "../alcatraz.core/linux-amazon/vmlinux"
 	RootfsPath     = "../alcatraz.core/rootfs"
-	AgentfsDir     = "../alcatraz.core/.agentfs"
+	AgentfsData    = "../alcatraz.core/.agentfs"
 	AgentfsBin     = "/home/dev/.cargo/bin/agentfs"
 
 	BaseTapDev    = "fc-tap"
@@ -35,7 +35,7 @@ const (
 type Config struct {
 	MaxVMs         int
 	AgentfsBin     string
-	AgentfsDir     string
+	AgentfsData    string
 	FirecrackerBin string
 	Rootfs         string
 	Kernel         string
@@ -59,11 +59,11 @@ func LoadConfig() (*Config, error) {
 	if v := os.Getenv("KERNEL_PATH"); v != "" {
 		cfg.Kernel = v
 	}
-	if v := os.Getenv("ROOTFS"); v != "" {
+	if v := os.Getenv("ROOTFS_PATH"); v != "" {
 		cfg.Rootfs = v
 	}
-	if v := os.Getenv("AGENTFS_DIR"); v != "" {
-		cfg.AgentfsDir = v
+	if v := os.Getenv("AGENTFS_DATA"); v != "" {
+		cfg.AgentfsData = v
 	}
 	if v := os.Getenv("AGENTFS_BIN"); v != "" {
 		cfg.AgentfsBin = v
@@ -79,7 +79,7 @@ func DefaultConfig() *Config {
 		FirecrackerBin: FirecrackerBin,
 		Rootfs:         RootfsPath,
 		Kernel:         KernelPath,
-		AgentfsDir:     AgentfsDir,
+		AgentfsData:    AgentfsData,
 	}
 }
 
