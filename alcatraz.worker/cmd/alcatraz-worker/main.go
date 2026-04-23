@@ -7,7 +7,7 @@ import (
 	"os/signal"
 	"syscall"
 
-	"alcatraz.worker/internal/nats"
+	nats "alcatraz.worker/internal/messaging"
 	"alcatraz.worker/internal/vm"
 )
 
