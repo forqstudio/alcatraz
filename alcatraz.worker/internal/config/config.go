@@ -36,11 +36,10 @@ const (
 )
 
 type Config struct {
-	NATSURL    string
-	Subject    string
-	MaxVMs     int
-	QueueGroup string
-
+	NATSURL        string
+	Subject        string
+	MaxVMs         int
+	QueueGroup     string
 	AgentfsBin     string
 	FirecrackerBin string
 	Rootfs         string
@@ -49,26 +48,12 @@ type Config struct {
 	AgentfsDir string
 }
 
-func DefaultConfig() *Config {
-	return &Config{
-		NATSURL:        DefaultNATSURL,
-		Subject:        DefaultSubject,
-		MaxVMs:         DefaultMaxVMs,
-		QueueGroup:     DefaultQueueGroup,
-		FirecrackerBin: FirecrackerBin,
-		Kernel:         KernelPath,
-		Rootfs:         RootfsPath,
-		AgentfsDir:     AgentfsDir,
-		AgentfsBin:     AgentfsBin,
-	}
-}
-
 func Load() (*Config, error) {
 	if err := godotenv.Load(EnvFile); err != nil {
 		return nil, err
 	}
 
-	cfg := DefaultConfig()
+	cfg := &Config{}
 
 	if v := os.Getenv("NATS_URL"); v != "" {
 		cfg.NATSURL = v
