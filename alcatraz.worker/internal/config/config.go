@@ -8,7 +8,7 @@ const (
 	DefaultMaxVMs     = 5
 	DefaultQueueGroup = "vm-workers"
 
-FirecrackerBin = "../alcatraz.core/bin/firecracker-v1.15.1"
+	FirecrackerBin = "../alcatraz.core/bin/firecracker-v1.15.1"
 	KernelPath     = "../alcatraz.core/linux-amazon/vmlinux"
 	RootfsPath    = "../alcatraz.core/rootfs"
 	AgentfsDir    = "../alcatraz.core/.agentfs"
@@ -48,7 +48,7 @@ func DefaultConfig() *Config {
 		QueueGroup:     DefaultQueueGroup,
 		FirecrackerBin: FirecrackerBin,
 		Kernel:         KernelPath,
-		Rootfs:         RootfsPath,
+		Rootfs:        RootfsPath,
 		AgentfsDir:     AgentfsDir,
 	}
 }

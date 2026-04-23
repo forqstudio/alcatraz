@@ -7,9 +7,6 @@ vm_config.*.json
 
 # Compiled binaries
 alcatraz.worker/bin/
-alcatraz.worker/cmd/*/spawn-client
-alcatraz.worker/cmd/*/alcatraz-worker
-alcatraz.worker/cmd/**/alcatraz-worker
 
 .DS_Store
 *.log
