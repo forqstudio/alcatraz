@@ -6,18 +6,18 @@ import (
 
 func TestVMRequestValidate(t *testing.T) {
 	tests := []struct {
-		name     string
-		req      VMRequest
-		wantID   bool
+		name      string
+		req       VMRequest
+		wantID    bool
 		wantVCPUs int
-		wantMem  int
+		wantMem   int
 	}{
 		{
-			name:     "empty request gets defaults",
-			req:      VMRequest{},
-			wantID:   true,
+			name:      "empty request gets defaults",
+			req:       VMRequest{},
+			wantID:    true,
 			wantVCPUs: DefaultVCPUs,
-			wantMem:  DefaultMemMib,
+			wantMem:   DefaultMemMib,
 		},
 		{
 			name: "partial request",

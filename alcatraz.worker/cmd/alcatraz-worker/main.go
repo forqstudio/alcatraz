@@ -13,24 +13,20 @@ import (
 )
 
 func main() {
-	cfg := config.DefaultConfig()
-
-	agentfsBin, err := vm.FindAgentfsBin(cfg.AgentfsBin)
+	cfg, err := config.Load()
 	if err != nil {
-		log.Printf("Warning: agentfs binary not found: %v", err)
-	} else {
-		cfg.AgentfsBin = agentfsBin
+		log.Fatalf("Failed to load config: %v", err)
 	}
 
 	mgr := vm.NewInstanceManager(cfg.MaxVMs)
 
 	handler := func(req *config.VMRequest) error {
 		opts := &vm.SpawnOptions{
-			AgentfsBin:    	cfg.AgentfsBin,
+			AgentfsBin:     cfg.AgentfsBin,
 			FirecrackerBin: cfg.FirecrackerBin,
-			Rootfs:        	cfg.Rootfs,
-			Kernel:        	cfg.Kernel,
-			AgentfsDir:    	cfg.AgentfsDir,
+			Rootfs:         cfg.Rootfs,
+			Kernel:         cfg.Kernel,
+			AgentfsDir:     cfg.AgentfsDir,
 		}
 
 		ctx := context.Background()

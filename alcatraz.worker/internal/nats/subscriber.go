@@ -13,11 +13,11 @@ import (
 type MessageHandler func(*config.VMRequest) error
 
 type Subscriber struct {
-	nc        *nats.Conn
-	sub       *nats.Subscription
-	subject   string
+	nc         *nats.Conn
+	sub        *nats.Subscription
+	subject    string
 	queueGroup string
-	handler   MessageHandler
+	handler    MessageHandler
 }
 
 func NewSubscriber(url, subject, queueGroup string, handler MessageHandler) (*Subscriber, error) {

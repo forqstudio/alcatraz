@@ -28,7 +28,7 @@ func TestFormatHostTapIP(t *testing.T) {
 
 func TestFormatVMIP(t *testing.T) {
 	tests := []struct {
-		idx   int
+		idx    int
 		wantIP string
 	}{
 		{0, "172.16.0.2"},
@@ -48,8 +48,8 @@ func TestFormatVMIP(t *testing.T) {
 
 func TestFormatSubnet(t *testing.T) {
 	tests := []struct {
-		idx    int
-		want   string
+		idx  int
+		want string
 	}{
 		{0, "172.16.0.0/24"},
 		{1, "172.16.1.0/24"},

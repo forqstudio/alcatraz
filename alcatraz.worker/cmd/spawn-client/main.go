@@ -17,14 +17,14 @@ const (
 var (
 	natsURL string
 	subject string
-	vmID   string
-	vcpus  int
-	mem    int
-	args  string
+	vmID    string
+	vcpus   int
+	mem     int
+	args    string
 )
 
 type VMRequest struct {
-	ID          string `json:"id,omitempty"`
+	ID         string `json:"id,omitempty"`
 	VCPUs      int    `json:"vcpus,omitempty"`
 	MemoryMib  int    `json:"memory_mib,omitempty"`
 	KernelArgs string `json:"kernel_args,omitempty"`
@@ -48,7 +48,7 @@ func main() {
 	}
 
 	req := VMRequest{
-		ID:          vmID,
+		ID:         vmID,
 		VCPUs:      vcpus,
 		MemoryMib:  mem,
 		KernelArgs: args,

@@ -19,30 +19,30 @@ import (
 )
 
 type InstanceManager struct {
-	mu       sync.Mutex
+	mu        sync.Mutex
 	instances map[string]*Instance
 	pool      []int
-	maxVMs   int
+	maxVMs    int
 }
 
 type Instance struct {
-	ID          string
+	ID         string
 	VCPUs      int
 	MemoryMib  int
 	KernelArgs string
-	Index     int
+	Index      int
 
 	TapDev    string
 	HostTapIP string
-	VMIP     string
-	Subnet   string
-	NFSPort  int
-	Socket   string
-	AgentID  string
+	VMIP      string
+	Subnet    string
+	NFSPort   int
+	Socket    string
+	AgentID   string
 
-	Machine   *firecracker.Machine
-	NFSProc   *exec.Cmd
-	Config   firecracker.Config
+	Machine    *firecracker.Machine
+	NFSProc    *exec.Cmd
+	Config     firecracker.Config
 	MachineCfg *models.MachineConfiguration
 
 	mu sync.Mutex
@@ -56,7 +56,7 @@ func NewInstanceManager(maxVMs int) *InstanceManager {
 	return &InstanceManager{
 		instances: make(map[string]*Instance),
 		pool:      pool,
-		maxVMs:   maxVMs,
+		maxVMs:    maxVMs,
 	}
 }
 
@@ -115,36 +115,6 @@ func RunCmd(name string, args ...string) error {
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	return cmd.Run()
-}
-
-func FindAgentfsBin(customPath string) (string, error) {
-	if customPath != "" {
-		return customPath, nil
-	}
-	locations := []string{
-		"agentfs",
-		"/home/dev/.cargo/bin/agentfs",
-		"/usr/local/bin/agentfs",
-	}
-	for _, loc := range locations {
-		if path, err := exec.LookPath(loc); err == nil {
-			return path, nil
-		}
-	}
-	return "", fmt.Errorf("agentfs not found")
-}
-
-func ResolveFirecrackerBin(customPath string) (string, error) {
-	if customPath != "" && FileExists(customPath) {
-		return customPath, nil
-	}
-	if FileExists(config.FirecrackerBin) {
-		return config.FirecrackerBin, nil
-	}
-	if path, err := exec.LookPath("firecracker"); err == nil {
-		return path, nil
-	}
-	return "", fmt.Errorf("firecracker binary not found")
 }
 
 func SetupTap(instance *Instance) error {
@@ -317,11 +287,11 @@ func CleanupInstance(instance *Instance) {
 }
 
 type SpawnOptions struct {
-	AgentfsBin   string
+	AgentfsBin     string
 	FirecrackerBin string
-	Rootfs       string
-	Kernel       string
-	AgentfsDir   string
+	Rootfs         string
+	Kernel         string
+	AgentfsDir     string
 }
 
 func FormatHostTapIP(idx int) string {
@@ -383,8 +353,8 @@ func Spawn(ctx context.Context, mgr *InstanceManager, req *config.VMRequest, opt
 	agentID := vmID
 
 	instance := &Instance{
-		ID:          vmID,
-		VCPUs:       vcpus,
+		ID:         vmID,
+		VCPUs:      vcpus,
 		MemoryMib:  memMib,
 		KernelArgs: kernelArgs,
 		Index:      idx,
@@ -447,11 +417,11 @@ func Spawn(ctx context.Context, mgr *InstanceManager, req *config.VMRequest, opt
 		},
 	}
 
-	fcBinPath, err := ResolveFirecrackerBin(opts.FirecrackerBin)
-	if err != nil {
+	fcBinPath := opts.FirecrackerBin
+	if !FileExists(fcBinPath) {
 		CleanupInstance(instance)
 		mgr.Release(idx)
-		return nil, err
+		return nil, fmt.Errorf("firecracker binary not found: %s", fcBinPath)
 	}
 
 	cmd := firecracker.VMCommandBuilder{}.
