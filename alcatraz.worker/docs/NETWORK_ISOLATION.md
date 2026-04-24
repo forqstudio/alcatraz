@@ -34,11 +34,18 @@ This document describes the network isolation architecture for Firecracker micro
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
 
-### Issues
-- All VMs in **same** network namespace (host root)
-- Cross-VM communication possible via ARP/bridge
-- Single point of failure for network rules
-- No isolation between VMs' network stacks
+### Why Additional Isolation?
+
+Firecracker VMs are already isolated from each other internally - each VM runs its own kernel with its own network stack. However, on the **host side**, all TAP devices (`fc-tap0`, `fc-tap1`, etc.) live in the same host network namespace.
+
+**Without iptables rules:**
+```
+Host root NS:  fc-tap0  ←──────  fc-tap1  (could communicate via host)
+                ↓                    ↓
+            172.16.0.2          172.16.1.2
+```
+
+The iptables rules prevent host-side bridging/ARP between TAP interfaces - they block traffic at the host level before it can reach other VMs.
 
 ## Current Architecture
 
@@ -72,9 +79,9 @@ This document describes the network isolation architecture for Firecracker micro
 
 ### Key Changes
 
-1. **TAP devices** - Still in root namespace (Firecracker requirement)
-2. **NAT** - Shared, enables internet access for all VMs
-3. **Isolation rules** - iptables DROP rules prevent cross-VM traffic
+1. **VM-level isolation** - Firecracker already isolates VMs from each other internally
+2. **Host-level isolation** - iptables rules block cross-VM traffic at TAP interface level
+3. **NAT** - Shared, enables internet access for all VMs
 
 ### Isolation Rules Added
 
