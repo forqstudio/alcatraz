@@ -90,26 +90,20 @@ func Spawn(
 
 	log.Printf("Spawning VM %s (vCPUs: %d, Mem: %d MiB, index: %d)", instance.id, instance.vcpus, instance.memoryMib, index)
 
-	if err := SetupTap(instance); err != nil {
+	if err := SetupTap(instance, instanceManager.GetMaxVMs()); err != nil {
 		instanceManager.Release(index)
 		return nil, fmt.Errorf("setup tap: %w", err)
 	}
 
-	if err := SetupNAT(instance); err != nil {
-		CleanupInstance(instance)
-		instanceManager.Release(index)
-		return nil, fmt.Errorf("setup nat: %w", err)
-	}
-
 	if err := PrepareAgentfsOverlay(instance, options.AgentfsBin, options.Rootfs, options.AgentfsData); err != nil {
-		CleanupInstance(instance)
+		CleanupInstance(instance, instanceManager.GetMaxVMs())
 		instanceManager.Release(index)
 		return nil, fmt.Errorf("prepare agentfs: %w", err)
 	}
 
 	nfsProc, err := StartAgentfsNFS(instance, options.AgentfsBin)
 	if err != nil {
-		CleanupInstance(instance)
+		CleanupInstance(instance, instanceManager.GetMaxVMs())
 		instanceManager.Release(index)
 		return nil, fmt.Errorf("start agentfs nfs: %w", err)
 	}
@@ -148,7 +142,7 @@ func Spawn(
 
 	fcBinPath := options.FirecrackerBin
 	if !FileExists(fcBinPath) {
-		CleanupInstance(instance)
+		CleanupInstance(instance, instanceManager.GetMaxVMs())
 		instanceManager.Release(index)
 		return nil, fmt.Errorf("firecracker binary not found: %s", fcBinPath)
 	}
@@ -160,14 +154,14 @@ func Spawn(
 
 	m, err := firecracker.NewMachine(context, cfg, firecracker.WithProcessRunner(cmd))
 	if err != nil {
-		CleanupInstance(instance)
+		CleanupInstance(instance, instanceManager.GetMaxVMs())
 		instanceManager.Release(index)
 		return nil, fmt.Errorf("create machine: %w", err)
 	}
 
 	if err := m.Start(context); err != nil {
 		instanceManager.RemoveVirtualMachine(instance.id)
-		CleanupInstance(instance)
+		CleanupInstance(instance, instanceManager.GetMaxVMs())
 		instanceManager.Release(index)
 		return nil, fmt.Errorf("start machine: %w", err)
 	}
@@ -181,7 +175,7 @@ func Spawn(
 		}
 		log.Printf("VM %s exited", id)
 		instanceManager.RemoveVirtualMachine(id)
-		CleanupInstance(instance)
+		CleanupInstance(instance, instanceManager.GetMaxVMs())
 		instanceManager.Release(index)
 	}()
 

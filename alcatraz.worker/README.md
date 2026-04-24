@@ -1,6 +1,6 @@
 # Alcatraz.Worker
 
-The `alcatraz-worker` is a Go application that listens to NATS messages to spawn Firecracker VMs dynamically. It supports multiple concurrent VMs, each with isolated networking via TAP devices and NAT.
+The `alcatraz-worker` is a Go application that listens to NATS messages to spawn Firecracker VMs dynamically. It supports multiple concurrent VMs, each with isolated networking via TAP devices with iptables-based isolation and NAT.
 
 This repository contains the build and launch scripts only. Generated artifacts such as `bin/`, `alcatraz.core/` symlinks, and log files are intentionally excluded from version control.
 
@@ -17,15 +17,17 @@ This repository contains the build and launch scripts only. Generated artifacts 
 1. Worker subscribes to NATS `vm.spawn` subject with queue group for load balancing
 2. On VM request, worker allocates an available slot
 3. Worker creates a TAP device and configures IP/NAT for the allocated subnet
-4. Worker initializes or reuses an AgentFS overlay in `.agentfs/<agent-id>.db`
-5. Worker starts AgentFS NFS server exporting the overlay on the host TAP IP
-6. Worker spawns Firecracker VM with root=/dev/nfs pointing to the AgentFS NFS export
-7. On VM exit, worker cleans up TAP device, NAT rules, and NFS process
+4. Worker adds iptables rules to block cross-VM traffic for network isolation
+5. Worker initializes or reuses an AgentFS overlay in `.agentfs/<agent-id>.db`
+6. Worker starts AgentFS NFS server exporting the overlay on the host TAP IP
+7. Worker spawns Firecracker VM with root=/dev/nfs pointing to the AgentFS NFS export
+8. On VM exit, worker cleans up TAP device, NAT rules, isolation rules, and NFS process
 
 The practical effect is:
 - VMs can be spawned on-demand via NATS messages
 - Multiple workers can handle load balancing via queue groups
-- Each VM gets isolated network stack with its own TAP/subnet/NFS port
+- Each VM gets isolated network stack with its own TAP/subnet/NFS
+- Network isolation between VMs - agents cannot reach other VMs' network interfaces
 
 ## Host Requirements
 
@@ -56,6 +58,7 @@ Worker-side:
 - Instance manager with slot allocation
 - TAP device creation and teardown
 - NAT setup and cleanup
+- iptables-based cross-VM isolation rules
 - AgentFS overlay initialization
 - AgentFS NFS server process
 - Firecracker VM lifecycle
@@ -170,11 +173,14 @@ The worker hashes `alcatraz.core/rootfs/etc/alcatraz-release` and refuses to sil
 ## Runtime Notes
 
 - Worker logs to stdout by default with go logrus
-- On VM exit, worker automatically cleans up: NFS process, TAP device, NAT rules, socket
+- On VM exit, worker automatically cleans up: NFS process, TAP device, NAT rules, isolation rules, socket
 - If the host `firecracker` binary is missing, worker tries to resolve from PATH
 - The host `agentfs` binary is auto-resolved from PATH or common locations
 - Worker uses queue-based subscription for load balancing across multiple workers
 - Slot allocation is atomic; returns error if no slots available (max VMs reached)
+- Cross-VM traffic is blocked via iptables DROP rules - agents cannot access other VMs' network
+
+See [docs/NETWORK_ISOLATION.md](docs/NETWORK_ISOLATION.md) for detailed network topology and isolation architecture.
 
 ## Useful Overrides
 

@@ -25,7 +25,8 @@ func (SubnetFormatter) Format(index int) string {
 }
 
 type TapDevFormatter struct {
-	Prefix string
+	Prefix    string
+	MaxSlots  int
 }
 
 func (t TapDevFormatter) Format(index int) string {

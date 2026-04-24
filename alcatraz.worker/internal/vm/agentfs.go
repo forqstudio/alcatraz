@@ -301,7 +301,7 @@ func StartAgentfsNFS(
 	return &NFSProcessCmd{cmd: cmd}, nil
 }
 
-func CleanupInstance(instance VirtualMachineInfo) {
+func CleanupInstance(instance VirtualMachineInfo, maxSlots int) {
 	log.Printf("Cleaning up instance %s", instance.GetID())
 
 	if proc := instance.GetNFSProcess(); proc != nil {
@@ -315,13 +315,7 @@ func CleanupInstance(instance VirtualMachineInfo) {
 		"-f",
 		fmt.Sprintf("agentfs serve nfs --bind %s --port %d", instance.GetHostTapIP(), instance.GetNFSPort())).Run()
 
-	RunCmd(
-		"ip",
-		"link",
-		"del",
-		instance.GetTapDev())
-
-	CleanupNAT(instance)
+	CleanupTap(instance, maxSlots)
 
 	if FileExists(instance.GetSocket()) {
 		os.Remove(instance.GetSocket())

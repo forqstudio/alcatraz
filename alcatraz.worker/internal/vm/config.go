@@ -94,7 +94,7 @@ type Formatters struct {
 
 func NewFormatters(cfg *VirtualMachineConfig) *Formatters {
 	return &Formatters{
-		TapDev:    TapDevFormatter{Prefix: BaseTapDev},
+		TapDev:    TapDevFormatter{Prefix: BaseTapDev, MaxSlots: cfg.MaxVMs},
 		NFS:       NFSPortFormatter{BasePort: BaseNFSPort},
 		Socket:    SocketFormatter{AgentfsDirectory: cfg.AgentfsData},
 		HostTapIP: HostTapIPFormatter{},

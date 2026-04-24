@@ -10,17 +10,17 @@ import (
 type VirtualMachine struct {
 	id         string
 	vcpus      int
-	memoryMib  int
+	memoryMib int
 	kernelArgs string
-	index      int
+	index     int
 
 	tapDev    string
 	hostTapIP string
-	vmIP      string
-	subnet    string
-	nfsPort   int
-	socket    string
-	agentID   string
+	vmIP     string
+	subnet   string
+	nfsPort  int
+	socket   string
+	agentID  string
 
 	machine *firecracker.Machine
 	nfsProc NFSProcess
@@ -193,6 +193,10 @@ func (virtualMachineService *VirtualMachineService) RemoveVirtualMachine(id stri
 	virtualMachineService.mu.Lock()
 	defer virtualMachineService.mu.Unlock()
 	delete(virtualMachineService.virtualMachines, id)
+}
+
+func (virtualMachineService *VirtualMachineService) GetMaxVMs() int {
+	return virtualMachineService.maxVMs
 }
 
 func (virtualMachineService *VirtualMachineService) GetVirtualMachine(id string) *VirtualMachine {
