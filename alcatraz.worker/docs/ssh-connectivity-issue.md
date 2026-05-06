@@ -1,5 +1,7 @@
 # SSH Connection Issue - Root Cause Analysis
 
+> **Note:** This document was written during the CNI migration. Some issues described (stale TAP devices, route conflicts) are now handled by the SDK's CNI cleanup (`doCleanup()` invoking CNI DEL). Retained for historical reference. See [cni-cleanup-fix.md](cni-cleanup-fix.md) for the cleanup fix details.
+
 ## Symptoms
 - VM spawns successfully, gets IP (e.g., 172.16.0.10)
 - SSH connection fails: "No route to host" / "Destination Host Unreachable"
@@ -33,7 +35,7 @@ TAP devices aren't being deleted when VMs exit (permission issues without sudo).
 ## Fixes Applied
 
 ### Fix 1: Remove eth0:off dependency
-In `internal/vm/vm.go`, change:
+In `internal/vm/vm_spawn.go`, change:
 ```
 eth0:off  ->  eth0
 ```
@@ -64,4 +66,4 @@ echo -n | sudo tee /var/lib/cni/networks/alcatraz-bridge
 
 3. **Route cleanup** - Explicitly delete routes before creating new TAP devices
 
-4. **Consider veth pairs** - Each VM could use a dedicated veth pair to avoid TAP accumulation issues
+4. ~~**Consider veth pairs**~~ - Resolved: CNI-based networking was adopted instead (see [cni-migration.md](cni-migration.md))

@@ -1,10 +1,97 @@
-# Network Isolation Migration
+# Network Isolation
 
-## Overview
+> **Note:** The TAP + iptables architecture described in the historical sections below has been replaced by CNI-based networking via the Firecracker Go SDK. See [cni-migration.md](cni-migration.md) for the current design.
 
-This document describes the network isolation architecture for Firecracker microVMs and the migration from the original TAP-based setup to the current iptables-based isolation.
+## Current Architecture (CNI Bridge)
 
-## Original Architecture (Pre-Migration)
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ HOST                                                                         │
+│                                                                              │
+│  ┌───────────────────────────────────────────────────────────────────────┐   │
+│  │ Bridge: alcatraz0 (172.16.0.1/24, isGateway)                          │   │
+│  │                                                                        │   │
+│  │   fc-tap0 ──── VM 0 (172.16.0.x)                                     │   │
+│  │   fc-tap1 ──── VM 1 (172.16.0.x)                                     │   │
+│  │   fc-tap2 ──── VM 2 (172.16.0.x)                                     │   │
+│  │   ...                                                                  │   │
+│  └────────────────────────────┬──────────────────────────────────────────┘   │
+│                               │                                              │
+│                        ipMasq (CNI bridge plugin)                            │
+│                               │                                              │
+│                               ↓                                              │
+│                         Internet                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+- **Bridge**: CNI `bridge` plugin creates `alcatraz0` with `isGateway: true`
+- **IPAM**: CNI `host-local` plugin allocates IPs from `172.16.0.10-250`
+- **TAP**: CNI `tc-redirect-tap` plugin creates per-VM TAP devices (`fc-tap0`, `fc-tap1`, ...)
+- **NAT**: Bridge plugin handles masquerade (`ipMasq: true`)
+- **Cleanup**: SDK's `doCleanup()` invokes CNI DEL on VM exit to release all resources
+- **NFS**: AgentFS NFS server binds to gateway IP `172.16.0.1`, port `8000 + slot index`
+
+All VMs share the bridge and can communicate with each other and the internet. The CNI conflist is at `cni/alcatraz-bridge.conflist`.
+
+### Known Limitation: No Cross-VM Isolation
+
+**Status:** VMs on the `alcatraz0` bridge can reach each other's services.
+
+**Tested 2026-05-06:**
+```
+# From VM at 172.16.0.12, connecting to VM at 172.16.0.11:
+al@alcatraz:~$ cat < /dev/tcp/172.16.0.11/22
+SSH-2.0-OpenSSH_9.6p1 Ubuntu-3ubuntu13
+```
+
+The CNI bridge plugin does not provide inter-VM isolation. Unlike the previous iptables-based architecture, there are no FORWARD DROP rules between TAP interfaces. Any VM can connect to any other VM's open ports via the shared bridge.
+
+**Impact:** Untrusted agents running in one VM can probe or connect to services (e.g., SSH, NFS) on other VMs on the same worker.
+
+**Why no CNI plugin can fix this:** L2 traffic between VMs on the same bridge is switched inside the kernel bridge and never reaches iptables FORWARD. No standard CNI plugin (firewall, tuning, bridge flags) provides same-bridge isolation. Docker's `--icc=false` is daemon behavior, not a CNI plugin. Calico/Cilium are full Kubernetes CNI replacements -- overkill here.
+
+**Recommended mitigation: `br_netfilter` + static iptables rule**
+
+Enable `br_netfilter` so bridged L2 traffic passes through iptables, then add a single bridge-wide DROP rule:
+
+```bash
+# Enable bridge netfilter (run once at boot or worker start)
+modprobe br_netfilter
+sysctl -w net.bridge.bridge-nf-call-iptables=1
+
+# Block all VM-to-VM traffic on the bridge
+iptables -A FORWARD -i alcatraz0 -o alcatraz0 -j DROP
+```
+
+This works because:
+- **VM-to-VM** traffic is `-i alcatraz0 -o alcatraz0` -- blocked by the DROP rule
+- **VM-to-gateway** (172.16.0.1) is local to the bridge interface -- not forwarded, unaffected
+- **VM-to-internet** is `-i alcatraz0 -o <host-iface>` -- does not match the rule, unaffected
+- **No per-VM cleanup needed** -- the rule is bridge-wide and static
+
+**To persist across reboots:**
+
+```bash
+# 1. Load br_netfilter on boot
+echo "br_netfilter" | sudo tee /etc/modules-load.d/br_netfilter.conf
+
+# 2. Enable bridge netfilter on boot
+echo "net.bridge.bridge-nf-call-iptables=1" | sudo tee /etc/sysctl.d/99-bridge-nf.conf
+
+# 3. Persist the iptables rule
+sudo apt install iptables-persistent   # if not already installed
+sudo iptables -A FORWARD -i alcatraz0 -o alcatraz0 -j DROP
+sudo netfilter-persistent save
+```
+
+**Other options considered:**
+- Per-VM bridges (separate L2 segments) -- works but adds complexity
+- CNI `firewall` plugin -- only does per-container anti-spoofing, not peer isolation
+- CNI `bridge` plugin flags -- no isolation flag exists
+
+---
+
+## Historical: Original Architecture (Pre-Isolation)
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
@@ -47,7 +134,7 @@ Host root NS:  fc-tap0  ←──────  fc-tap1  (could communicate via h
 
 The iptables rules prevent host-side bridging/ARP between TAP interfaces - they block traffic at the host level before it can reach other VMs.
 
-## Current Architecture
+## Historical: TAP + iptables Architecture
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
@@ -77,7 +164,7 @@ The iptables rules prevent host-side bridging/ARP between TAP interfaces - they 
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
 
-### Key Changes
+### Key Changes (from original to iptables)
 
 1. **VM-level isolation** - Firecracker already isolates VMs from each other internally
 2. **Host-level isolation** - iptables rules block cross-VM traffic at TAP interface level
@@ -211,14 +298,14 @@ If Firecracker adds veth support in the future:
 
 ## Comparison
 
-| Aspect            | Original | Current (iptables) | veth + NS (Attempted) |
-|-------------------|----------|--------------------|-----------------------|
-| Cross-VM access   | ✅ Possible | ❌ Blocked | ❌ Impossible |
-| Network namespace | Host root | Host root | Per-VM |
-| NAT location      | Host root | Host root | Per-VM |
-| Firecracker compat| ✅ | ✅ | ❌ (veth not supported) |
-| NFS isolation     | Host root | Host root | In namespace |
-| Implementation    | N/A | Simple | Failed (incompatible) |
+| Aspect            | Original (TAP) | iptables | CNI Bridge (Current) | veth + NS (Attempted) |
+|-------------------|----------------|----------|---------------------|-----------------------|
+| Cross-VM access   | ✅ Possible | ❌ Blocked | ✅ Possible (shared bridge) | ❌ Impossible |
+| Network namespace | Host root | Host root | CNI-managed | Per-VM |
+| NAT location      | Host root | Host root | CNI bridge plugin (ipMasq) | Per-VM |
+| Firecracker compat| ✅ | ✅ | ✅ | ❌ (veth not supported) |
+| NFS isolation     | Host root | Host root | Host root (bridge gateway) | In namespace |
+| Implementation    | N/A | Simple | SDK-managed | Failed (incompatible) |
 
 ## Future Improvements
 
@@ -230,15 +317,15 @@ If Firecracker adds veth support, consider:
 
 ## Configuration
 
-The number of slots is configurable via `MAX_VMS` or `--max-vms`:
+The number of slots is configurable via `--max-vms`:
 
 ```bash
 # Default: 5 slots
 # Each slot gets:
-#   - TAP: fc-tap{0..4}
-#   - Host IP: 172.16.{i}.1
-#   - Guest IP: 172.16.{i}.2
-#   - NFS port: 11111 + i
+#   - TAP: fc-tap{0..N}
+#   - VM IP: dynamic from 172.16.0.10-250 (CNI host-local IPAM)
+#   - Gateway: 172.16.0.1 (bridge)
+#   - NFS port: 8000 + index
 ```
 
-The isolation rules automatically adapt to `MAX_VMS` - no hardcoded limits.
+Current config supports ~240 VMs. To scale further, change the subnet to `/16` in `cni/alcatraz-bridge.conflist`.

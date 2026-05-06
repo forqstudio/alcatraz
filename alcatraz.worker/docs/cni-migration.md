@@ -33,7 +33,7 @@ Each VM gets:
 - **Unique VMID** (from `instance.id`) → used as CNI `containerID`
 - **Unique TAP device** (e.g., `fc-tap0`, `fc-tap1`, `fc-tap2`) → passed as CNI `IfName`
 
-From `vm.go:73,113-121`:
+From `vm_spawn.go`:
 ```go
 tapDev := fmt.Sprintf("fc-tap%d", index)
 // ...
@@ -55,10 +55,11 @@ The `host-local` plugin in `cni/alcatraz-bridge.conflist`:
 The `bridge` plugin:
 - Creates shared bridge `alcatraz0` (first VM creates it, others join)
 - Attaches each VM's TAP device to the bridge
-- All VMs can communicate and share outbound internet access
+- All VMs share outbound internet access
+- **Note:** VMs can communicate with each other via the shared bridge -- there is no inter-VM isolation (see [network-isolation.md](network-isolation.md))
 
 ### VM Slot Management
-The `IntPool` in `instance_manager.go:124-130`:
+The `IntPool` in `vm_service.go`:
 - Manages available VM slots (0 to maxVMs-1)
 - Ensures unique indices are allocated
 - Releases indices when VMs stop
@@ -96,12 +97,18 @@ Uses CNI list format with chained plugins:
     {
       "type": "bridge",
       "bridge": "alcatraz0",
+      "isGateway": true,
       "ipMasq": true,
       "ipam": {
         "type": "host-local",
         "subnet": "172.16.0.0/24",
         "rangeStart": "172.16.0.10",
-        "rangeEnd": "172.16.0.250"
+        "rangeEnd": "172.16.0.250",
+        "routes": [
+          {
+            "dst": "0.0.0.0/0"
+          }
+        ]
       }
     },
     {
@@ -111,7 +118,7 @@ Uses CNI list format with chained plugins:
 }
 ```
 
-### 2. VM Configuration (`internal/vm/vm.go`)
+### 2. VM Configuration (`internal/vm/vm_spawn.go`)
 
 Uses `CNIConfiguration` instead of manual network setup:
 
@@ -151,8 +158,8 @@ The SDK automatically:
 ### Files Modified
 | File | Change |
 |------|--------|
-| `internal/vm/vm.go` | Use `CNIConfiguration`, remove `SetupTAPDev()`, `SetupNAT()`, `SetupIsolationRules()` |
-| `internal/vm/instance_manager.go` | Remove `ipamClient`, `AllocateNetwork()`, `ReleaseNetwork()` |
+| `internal/vm/vm_spawn.go` | Use `CNIConfiguration`, remove `SetupTAPDev()`, `SetupNAT()`, `SetupIsolationRules()` |
+| `internal/vm/vm_service.go` | Remove `ipamClient`, `AllocateNetwork()`, `ReleaseNetwork()` |
 
 ### Flow: VM Spawn (New)
 

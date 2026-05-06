@@ -1,6 +1,6 @@
 # Alcatraz.Worker
 
-The `alcatraz-worker` is a Go application that listens to NATS messages to spawn Firecracker VMs dynamically. It supports multiple concurrent VMs, each with isolated networking via TAP devices with iptables-based isolation and NAT.
+The `alcatraz-worker` is a Go application that listens to NATS messages to spawn Firecracker VMs dynamically. It supports multiple concurrent VMs, each with CNI-based networking via the Firecracker Go SDK and a shared bridge (`alcatraz0`).
 
 This repository contains the build and launch scripts only. Generated artifacts such as `bin/`, `alcatraz.core/` symlinks, and log files are intentionally excluded from version control.
 
@@ -16,18 +16,18 @@ This repository contains the build and launch scripts only. Generated artifacts 
 
 1. Worker subscribes to NATS `vm.spawn` subject with queue group for load balancing
 2. On VM request, worker allocates an available slot
-3. Worker creates a TAP device and configures IP/NAT for the allocated subnet
-4. Worker adds iptables rules to block cross-VM traffic for network isolation
-5. Worker initializes or reuses an AgentFS overlay in `.agentfs/<agent-id>.db`
-6. Worker starts AgentFS NFS server exporting the overlay on the host TAP IP
-7. Worker spawns Firecracker VM with root=/dev/nfs pointing to the AgentFS NFS export
-8. On VM exit, worker cleans up TAP device, NAT rules, isolation rules, and NFS process
+3. Worker configures `CNIConfiguration` for the Firecracker SDK; on VM start, the SDK invokes CNI plugins (bridge, host-local IPAM, tc-redirect-tap) which handle TAP creation, IP allocation, and NAT automatically
+4. Worker initializes or reuses an AgentFS overlay in `.agentfs/<agent-id>.db`
+5. Worker starts AgentFS NFS server exporting the overlay on the bridge gateway IP
+6. Worker spawns Firecracker VM with root=/dev/nfs pointing to the AgentFS NFS export
+7. On VM exit, the SDK's `doCleanup()` invokes CNI DEL to release TAP, IP, and namespace; worker cleans up NFS process and releases the slot
 
 The practical effect is:
 - VMs can be spawned on-demand via NATS messages
 - Multiple workers can handle load balancing via queue groups
-- Each VM gets isolated network stack with its own TAP/subnet/NFS
-- Network isolation between VMs - agents cannot reach other VMs' network interfaces
+- Each VM gets a unique IP on a shared bridge with NFS root via AgentFS
+- CNI plugins handle all networking setup and teardown automatically
+- **Note:** VMs on the same worker can currently communicate with each other via the shared bridge (see [docs/network-isolation.md](docs/network-isolation.md))
 
 ## Host Requirements
 
@@ -36,11 +36,32 @@ You need these on the host:
 - KVM / Firecracker support
 - `agentfs` installed on the host and available on `PATH`
 - `firecracker` binary available (auto-resolved to v1.15.1 or PATH)
-- NATS server running 
-- `iptables` available for NAT
-- package install permissions for `ip`, `iptables`, `sysctl`
+- NATS server running
+- CNI plugins installed at `/opt/cni/bin` (bridge, host-local, tc-redirect-tap)
+- CNI conflist installed at `/etc/cni/net.d/alcatraz-bridge.conflist`
 
-The worker requires `sudo` to create TAP devices and set up NAT rules.
+The worker requires `sudo` for CNI networking operations.
+
+### CNI Prerequisites
+
+Install CNI plugins:
+
+```bash
+# Standard CNI plugins (bridge, host-local, etc.)
+curl -sL https://github.com/containernetworking/plugins/releases/download/v1.0.1/cni-plugins-linux-amd64-v1.0.1.tgz | \
+  sudo tar -xz -C /opt/cni/bin/
+
+# tc-redirect-tap (Firecracker-specific)
+git clone https://github.com/firecracker-microvm/tc-redirect-tap.git
+cd tc-redirect-tap && make && sudo cp tc-redirect-tap /opt/cni/bin/
+```
+
+Install the CNI config:
+
+```bash
+sudo mkdir -p /etc/cni/net.d
+sudo cp cni/alcatraz-bridge.conflist /etc/cni/net.d/
+```
 
 The worker expects:
 - Host uplink interface detectable from `ip route show default`
@@ -55,10 +76,9 @@ The worker expects:
 
 Worker-side:
 - NATS subscriber (vm.spawn listener)
-- Instance manager with slot allocation
-- TAP device creation and teardown
-- NAT setup and cleanup
-- iptables-based cross-VM isolation rules
+- VM service with slot allocation
+- CNI-based networking (via Firecracker SDK CNIConfiguration)
+- SDK-managed cleanup (CNI DEL on VM exit)
 - AgentFS overlay initialization
 - AgentFS NFS server process
 - Firecracker VM lifecycle
@@ -77,15 +97,16 @@ VM-side (delegated to alcatraz.core):
 - default kernel args: `loglevel=7 printk.devkmsg=on`
 - hostname: `alcatraz`
 
-Each VM gets allocated a unique subnet:
+All VMs share subnet `172.16.0.0/24` on bridge `alcatraz0`. IPs are allocated dynamically by the CNI host-local IPAM plugin from `172.16.0.10-250`:
 
-| Slot | TAP Device | Host IP   | Guest IP  | NFS Port |
-|------|-----------|-----------|-----------|----------|
-| 0    | fc-tap0   | 172.16.0.1 | 172.16.0.2 | 11111  |
-| 1    | fc-tap1   | 172.16.1.1 | 172.16.1.2 | 11112  |
-| 2    | fc-tap2   | 172.16.2.1 | 172.16.2.2 | 11113  |
-| 3    | fc-tap3   | 172.16.3.1 | 172.16.3.2 | 11114  |
-| 4    | fc-tap4   | 172.16.4.1 | 172.16.4.2 | 11115  |
+| Slot | TAP Device | VM IP (dynamic)* | Gateway    | NFS Port |
+|------|-----------|-------------------|------------|----------|
+| 0    | fc-tap0   | 172.16.0.10       | 172.16.0.1 | 8000     |
+| 1    | fc-tap1   | 172.16.0.11       | 172.16.0.1 | 8001     |
+| 2    | fc-tap2   | 172.16.0.12       | 172.16.0.1 | 8002     |
+| ...  | ...       | ...               | 172.16.0.1 | ...      |
+
+\* VM IPs depend on allocation order, not slot index. Check worker logs for the actual assigned IP.
 
 ## Build
 
@@ -155,10 +176,10 @@ All fields are optional. Defaults: vcpus=4, memory_mib=8192, kernel_args="loglev
 ## Connect to VM
 
 ```bash
-ssh dev@172.16.0.2
+ssh dev@<VM_IP>
 ```
 
-Default password: `dev`
+The VM IP is logged by the worker at spawn time (e.g., `172.16.0.10`). Default password: `dev`
 
 ## Persistence Model
 
@@ -173,14 +194,13 @@ The worker hashes `alcatraz.core/rootfs/etc/alcatraz-release` and refuses to sil
 ## Runtime Notes
 
 - Worker logs to stdout by default with go logrus
-- On VM exit, worker automatically cleans up: NFS process, TAP device, NAT rules, isolation rules, socket
+- On VM exit, SDK's `doCleanup()` handles CNI teardown (TAP, IP, namespace); worker cleans up NFS process and socket
 - If the host `firecracker` binary is missing, worker tries to resolve from PATH
 - The host `agentfs` binary is auto-resolved from PATH or common locations
 - Worker uses queue-based subscription for load balancing across multiple workers
 - Slot allocation is atomic; returns error if no slots available (max VMs reached)
-- Cross-VM traffic is blocked via iptables DROP rules - agents cannot access other VMs' network
 
-See [docs/NETWORK_ISOLATION.md](docs/NETWORK_ISOLATION.md) for detailed network topology and isolation architecture.
+See [docs/cni-migration.md](docs/cni-migration.md) for CNI networking architecture and [docs/network-isolation.md](docs/network-isolation.md) for historical network isolation notes.
 
 ## Useful Overrides
 
