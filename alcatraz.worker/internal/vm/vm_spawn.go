@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"time"
 
 	firecracker "github.com/firecracker-microvm/firecracker-go-sdk"
 	"github.com/firecracker-microvm/firecracker-go-sdk/client/models"
@@ -183,10 +184,17 @@ func Spawn(
 
 	go func() {
 		id := instance.id
-		if err := m.Wait(ctx); err != nil {
+		// Use background context so cleanup isn't cancelled when Spawn() returns
+		waitCtx := context.Background()
+		if err := m.Wait(waitCtx); err != nil {
 			log.Printf("VM %s wait error: %v", id, err)
 		}
-		log.Printf("VM %s exited", id)
+		log.Printf("VM %s exited, SDK should now run doCleanup() to release CNI resources", id)
+
+		// Give SDK time to run doCleanup()
+		time.Sleep(2 * time.Second)
+
+		log.Printf("VM %s cleanup complete, removing from service", id)
 		virtualMachineService.RemoveVirtualMachine(id)
 		virtualMachineService.Release(index)
 	}()
