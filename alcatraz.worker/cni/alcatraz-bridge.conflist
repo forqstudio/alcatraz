@@ -5,6 +5,7 @@
     {
       "type": "bridge",
       "bridge": "alcatraz0",
+      "isGateway": true,
       "ipMasq": true,
       "ipam": {
         "type": "host-local",

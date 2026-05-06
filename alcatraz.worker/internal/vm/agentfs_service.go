@@ -9,6 +9,12 @@ import (
 	"time"
 )
 
+type NFSProcess interface {
+	GetProcess() interface{}
+	Kill() error
+	Wait() error
+}
+
 type AgentfsOption func(*AgentfsConfig)
 
 type AgentfsConfig struct {

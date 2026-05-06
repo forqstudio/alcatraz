@@ -59,7 +59,7 @@ func (builder *VirtualMachineBuilder) Build() *VirtualMachine {
 }
 
 func Spawn(
-	context context.Context,
+	ctx context.Context,
 	virtualMachineService *VirtualMachineService,
 	createVMInput *CreateVirtualMachineInput,
 	spawnOptions *SpawnOptions) (*VirtualMachine, error) {
@@ -87,16 +87,20 @@ func Spawn(
 		return nil, fmt.Errorf("prepare agentfs: %w", err)
 	}
 
-	nfsProc, err := StartAgentfsNFS(instance, spawnOptions.AgentfsBin)
-	if err != nil {
-		virtualMachineService.Release(index)
-		return nil, fmt.Errorf("start agentfs nfs: %w", err)
-	}
-	instance.SetNFSProcess(nfsProc)
+	// Determine gateway IP (NFS server address)
+	// From CNI host-local IPAM, the gateway is the first IP in the subnet (172.16.0.1 for 172.16.0.0/24)
+	gatewayIP := "172.16.0.1"
+	instance.SetHostTapIP(gatewayIP)
 
+	// NFS will be started in a custom handler after CNI sets up the network
+	// (the alcatraz0 bridge needs to exist before NFS can bind to 172.16.0.1)
+
+	// Boot args for NFS root mount
+	// The "ip=" parameter will be added by the SDK's SetupKernelArgs handler based on CNI results
 	bootArgs := fmt.Sprintf(
-		"console=ttyS0 reboot=k panic=1 pci=off %s root=/dev/nfs nfsroot=${GATEWAY_IP}:/,nfsvers=3,tcp,nolock,port=%d,mountport=%d rw init=/init",
+		"console=ttyS0 reboot=k panic=1 pci=off %s root=/dev/nfs nfsroot=%s:/,nfsvers=3,tcp,nolock,port=%d,mountport=%d rw init=/init",
 		instance.kernelArgs,
+		gatewayIP,
 		instance.nfsPort,
 		instance.nfsPort,
 	)
@@ -132,25 +136,54 @@ func Spawn(
 	cmd := firecracker.VMCommandBuilder{}.
 		WithBin(firecrackerBinPath).
 		WithSocketPath(instance.socket).
-		Build(context)
+		Build(ctx)
 
-	m, err := firecracker.NewMachine(context, cfg, firecracker.WithProcessRunner(cmd))
+	m, err := firecracker.NewMachine(ctx, cfg, firecracker.WithProcessRunner(cmd),
+		func(m *firecracker.Machine) {
+			// Add a custom handler to start NFS after CNI sets up the network
+			m.Handlers.FcInit = m.Handlers.FcInit.AppendAfter(
+				firecracker.SetupNetworkHandlerName,
+				firecracker.Handler{
+					Name: "alcatraz.StartNFS",
+					Fn: func(ctx context.Context, m *firecracker.Machine) error {
+						nfsProc, err := StartAgentfsNFS(instance, spawnOptions.AgentfsBin)
+						if err != nil {
+							return fmt.Errorf("start agentfs nfs: %w", err)
+						}
+						instance.SetNFSProcess(nfsProc)
+						return nil
+					},
+				},
+			)
+		},
+	)
 	if err != nil {
 		virtualMachineService.Release(index)
 		return nil, fmt.Errorf("create machine: %w", err)
 	}
 
-	if err := m.Start(context); err != nil {
+	if err := m.Start(ctx); err != nil {
 		virtualMachineService.RemoveVirtualMachine(instance.id)
 		virtualMachineService.Release(index)
 		return nil, fmt.Errorf("start machine: %w", err)
 	}
 
-	log.Printf("VM %s started", instance.id)
+	// Extract IPs from CNI result via the machine's network interfaces
+	for _, iface := range m.Cfg.NetworkInterfaces {
+		if iface.StaticConfiguration != nil && iface.StaticConfiguration.IPConfiguration != nil {
+			ipConf := iface.StaticConfiguration.IPConfiguration
+			instance.SetVMIP(ipConf.IPAddr.String())
+			instance.SetHostTapIP(ipConf.Gateway.String())
+			break
+		}
+	}
+
+	log.Printf("VM %s started (tap: %s, IP: %s, gateway: %s)",
+		instance.id, instance.tapDev, instance.GetVMIP(), instance.GetHostTapIP())
 
 	go func() {
 		id := instance.id
-		if err := m.Wait(context); err != nil {
+		if err := m.Wait(ctx); err != nil {
 			log.Printf("VM %s wait error: %v", id, err)
 		}
 		log.Printf("VM %s exited", id)

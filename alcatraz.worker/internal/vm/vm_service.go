@@ -7,6 +7,18 @@ import (
 	firecracker "github.com/firecracker-microvm/firecracker-go-sdk"
 )
 
+type VirtualMachineInfo interface {
+	GetTapDev() string
+	GetHostTapIP() string
+	GetVMIP() string
+	GetSubnet() string
+	GetNFSPort() int
+	GetSocket() string
+	GetAgentID() string
+	GetID() string
+	GetNFSProcess() NFSProcess
+}
+
 type VirtualMachine struct {
 	id         string
 	vcpus      int
@@ -18,6 +30,8 @@ type VirtualMachine struct {
 	nfsPort   int
 	socket    string
 	agentID   string
+	hostTapIP string
+	vmIP      string
 
 	machine *firecracker.Machine
 	nfsProc NFSProcess
@@ -92,9 +106,12 @@ func (virtualMachine *VirtualMachine) GetMemoryMib() int     { return virtualMac
 func (virtualMachine *VirtualMachine) GetKernelArgs() string { return virtualMachine.kernelArgs }
 func (virtualMachine *VirtualMachine) GetIndex() int         { return virtualMachine.index }
 func (virtualMachine *VirtualMachine) GetTapDev() string     { return virtualMachine.tapDev }
-func (virtualMachine *VirtualMachine) GetHostTapIP() string  { return fmt.Sprintf("172.16.%d.1", virtualMachine.index) }
-func (virtualMachine *VirtualMachine) GetVMIP() string       { return fmt.Sprintf("172.16.%d.2", virtualMachine.index) }
-func (virtualMachine *VirtualMachine) GetSubnet() string     { return fmt.Sprintf("172.16.%d.0/24", virtualMachine.index) }
+func (virtualMachine *VirtualMachine) GetHostTapIP() string { return virtualMachine.hostTapIP }
+func (virtualMachine *VirtualMachine) GetVMIP() string       { return virtualMachine.vmIP }
+func (virtualMachine *VirtualMachine) GetSubnet() string     { return "172.16.0.0/24" }
+
+func (virtualMachine *VirtualMachine) SetHostTapIP(ip string) { virtualMachine.hostTapIP = ip }
+func (virtualMachine *VirtualMachine) SetVMIP(ip string)       { virtualMachine.vmIP = ip }
 func (virtualMachine *VirtualMachine) GetNFSPort() int       { return virtualMachine.nfsPort }
 func (virtualMachine *VirtualMachine) GetSocket() string     { return virtualMachine.socket }
 func (virtualMachine *VirtualMachine) GetAgentID() string    { return virtualMachine.agentID }
