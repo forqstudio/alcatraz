@@ -23,7 +23,7 @@ type NFSServer struct {
 }
 
 // StartNFS binds an NFSv3 listener on bindIP:port and serves the overlay until Kill.
-func StartNFS(handle *OverlayHandle, bindIP string, port int) (*NFSServer, error) {
+func StartNFS(handle *OverlayHandle, agentID, bindIP string, port int) (*NFSServer, error) {
 	addr := net.JoinHostPort(bindIP, strconv.Itoa(port))
 	ln, err := net.Listen("tcp", addr)
 	if err != nil {
@@ -43,7 +43,7 @@ func StartNFS(handle *OverlayHandle, bindIP string, port int) (*NFSServer, error
 		defer close(srv.done)
 		srv.err = nfs.Serve(ln, cachingHandler)
 	}()
-	log.Printf("AgentFS NFS listening on %s", addr)
+	log.Printf("AgentFS NFS for %s listening on %s", agentID, addr)
 	return srv, nil
 }
 

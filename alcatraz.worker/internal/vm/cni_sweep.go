@@ -14,6 +14,7 @@ const cniIPAMDir = "/var/lib/cni/networks/alcatraz-bridge"
 // allocator so the next spawn gets .10 instead of continuing past wherever
 // the previous run stopped.
 func SweepIPAM() {
+	log.Printf("IPAM sweep: scanning %s for stale leases", cniIPAMDir)
 	entries, err := os.ReadDir(cniIPAMDir)
 	if err != nil {
 		if !os.IsNotExist(err) {
@@ -35,5 +36,7 @@ func SweepIPAM() {
 	}
 	if removed > 0 {
 		log.Printf("IPAM sweep: removed %d stale entr(ies) from %s", removed, cniIPAMDir)
+	} else {
+		log.Printf("IPAM sweep: no stale entries")
 	}
 }

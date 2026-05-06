@@ -67,7 +67,7 @@ func (subscriber *Subscriber) handleMessage(message *nats.Msg) {
 		return
 	}
 
-	log.Printf("Received spawn request: %+v", msg)
+	log.Printf("Received spawn request: id=%s vcpus=%d memory_mib=%d", msg.ID, msg.VCPUs, msg.MemoryMib)
 
 	if err := subscriber.handler(&msg); err != nil {
 		log.Printf("Failed to handle request: %v", err)

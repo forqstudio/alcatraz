@@ -25,7 +25,7 @@ func StartAgentfsNFS(ctx context.Context, instance VirtualMachineInfo, rootfsPat
 	if err != nil {
 		return nil, err
 	}
-	srv, err := afsworker.StartNFS(handle, instance.GetHostTapIP(), instance.GetNFSPort())
+	srv, err := afsworker.StartNFS(handle, instance.GetAgentID(), instance.GetHostTapIP(), instance.GetNFSPort())
 	if err != nil {
 		_ = handle.Close()
 		return nil, err

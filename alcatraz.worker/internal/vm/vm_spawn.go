@@ -81,11 +81,13 @@ func Spawn(
 
 	instance.tapDev = tapDev
 	log.Printf("Spawning VM %s (vCPUs: %d, Mem: %d MiB, index: %d)", instance.id, instance.vcpus, instance.memoryMib, index)
+	log.Printf("VM %s allocated slot %d (tap=%s, nfs_port=%d)", instance.id, index, instance.tapDev, instance.nfsPort)
 
 	if err := PrepareAgentfsOverlay(ctx, instance, spawnOptions.Rootfs, spawnOptions.AgentfsData); err != nil {
 		virtualMachineService.Release(index)
 		return nil, fmt.Errorf("prepare agentfs: %w", err)
 	}
+	log.Printf("VM %s agentfs overlay ready (data=%s)", instance.id, spawnOptions.AgentfsData)
 
 	// Determine gateway IP (NFS server address)
 	// From CNI host-local IPAM, the gateway is the first IP in the subnet (172.16.0.1 for 172.16.0.0/24)
@@ -146,6 +148,7 @@ func Spawn(
 				firecracker.Handler{
 					Name: "alcatraz.StartNFS",
 					Fn: func(ctx context.Context, m *firecracker.Machine) error {
+						log.Printf("VM %s network up, starting AgentFS NFS server", instance.id)
 						nfsProc, err := StartAgentfsNFS(ctx, instance, spawnOptions.Rootfs, spawnOptions.AgentfsData)
 						if err != nil {
 							return fmt.Errorf("start agentfs nfs: %w", err)
@@ -162,6 +165,7 @@ func Spawn(
 		return nil, fmt.Errorf("create machine: %w", err)
 	}
 
+	log.Printf("VM %s booting Firecracker (CNI will configure %s on bridge alcatraz-bridge)", instance.id, tapDev)
 	if err := m.Start(ctx); err != nil {
 		virtualMachineService.Release(index)
 		return nil, fmt.Errorf("start machine: %w", err)
@@ -180,8 +184,8 @@ func Spawn(
 		}
 	}
 
-	log.Printf("VM %s started (tap: %s, IP: %s, gateway: %s)",
-		instance.id, instance.tapDev, instance.GetVMIP(), instance.GetHostTapIP())
+	log.Printf("VM %s ready (tap=%s, vm_ip=%s, gateway=%s, nfs_port=%d)",
+		instance.id, instance.tapDev, instance.GetVMIP(), instance.GetHostTapIP(), instance.nfsPort)
 
 	virtualMachineService.trackCleanup()
 	go func() {
@@ -200,6 +204,7 @@ func Spawn(
 		log.Printf("VM %s cleanup complete, removing from service", id)
 		virtualMachineService.RemoveVirtualMachine(id)
 		virtualMachineService.Release(index)
+		log.Printf("VM %s released slot %d back to pool", id, index)
 	}()
 
 	return instance, nil

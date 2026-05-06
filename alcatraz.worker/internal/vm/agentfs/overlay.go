@@ -96,6 +96,8 @@ func PrepareOverlay(ctx context.Context, agentID, rootfsPath, dataDir string) er
 			return err
 		}
 		_ = handle.Close()
+	} else {
+		log.Printf("Reusing existing AgentFS overlay for %s (rootfs unchanged)", agentID)
 	}
 
 	if currentStamp != "" {

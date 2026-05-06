@@ -48,7 +48,7 @@ func TestPrepareAndServeNFS_Lifecycle(t *testing.T) {
 	defer handle.Close()
 
 	port := freePort(t)
-	srv, err := StartNFS(handle, "127.0.0.1", port)
+	srv, err := StartNFS(handle, agentID, "127.0.0.1", port)
 	if err != nil {
 		t.Fatalf("StartNFS: %v", err)
 	}

@@ -20,9 +20,13 @@ func main() {
 		log.Fatalf("Failed to load NATS config: %v", err)
 	}
 
+	log.Printf("Worker starting (firecracker=%s, rootfs=%s, kernel=%s, agentfs_data=%s)",
+		vmConfig.FirecrackerBin, vmConfig.Rootfs, vmConfig.Kernel, vmConfig.AgentfsData)
+
 	virtualMachine.SweepIPAM()
 
 	mgr := virtualMachine.NewVirtualMachineService()
+	log.Printf("VM service ready (max concurrent VMs: %d)", mgr.GetMaxVMs())
 
 	handler := func(message *messaging.Message) error {
 		vmRequest := message.ToCreateVirtualMachineInput()
