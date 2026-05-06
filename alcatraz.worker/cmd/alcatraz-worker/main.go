@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	messaging "alcatraz.worker/internal/messaging"
 	virtualMachine "alcatraz.worker/internal/vm"
@@ -18,6 +19,8 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to load NATS config: %v", err)
 	}
+
+	virtualMachine.SweepIPAM()
 
 	mgr := virtualMachine.NewVirtualMachineService()
 
@@ -52,4 +55,8 @@ func main() {
 
 	log.Println("Shutting down...")
 	subscriber.Stop()
+
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	mgr.Shutdown(shutdownCtx)
 }

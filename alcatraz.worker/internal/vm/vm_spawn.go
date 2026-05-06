@@ -163,10 +163,12 @@ func Spawn(
 	}
 
 	if err := m.Start(ctx); err != nil {
-		virtualMachineService.RemoveVirtualMachine(instance.id)
 		virtualMachineService.Release(index)
 		return nil, fmt.Errorf("start machine: %w", err)
 	}
+
+	instance.machine = m
+	virtualMachineService.AddVirtualMachine(instance)
 
 	// Extract IPs from CNI result via the machine's network interfaces
 	for _, iface := range m.Cfg.NetworkInterfaces {
@@ -181,7 +183,9 @@ func Spawn(
 	log.Printf("VM %s started (tap: %s, IP: %s, gateway: %s)",
 		instance.id, instance.tapDev, instance.GetVMIP(), instance.GetHostTapIP())
 
+	virtualMachineService.trackCleanup()
 	go func() {
+		defer virtualMachineService.cleanupDone()
 		id := instance.id
 		// Use background context so cleanup isn't cancelled when Spawn() returns
 		waitCtx := context.Background()

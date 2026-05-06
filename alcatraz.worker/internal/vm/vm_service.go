@@ -1,8 +1,11 @@
 package vm
 
 import (
+	"context"
 	"fmt"
+	"log"
 	"sync"
+	"time"
 
 	firecracker "github.com/firecracker-microvm/firecracker-go-sdk"
 )
@@ -131,6 +134,7 @@ type VirtualMachineService struct {
 	virtualMachines map[string]*VirtualMachine
 	pool            IntPool
 	maxVMs          int
+	cleanupWG       sync.WaitGroup
 }
 
 type IntPool struct {
@@ -233,4 +237,49 @@ func (virtualMachineService *VirtualMachineService) ListVirtualMachines() []*Vir
 		instances = append(instances, inst)
 	}
 	return instances
+}
+
+func (virtualMachineService *VirtualMachineService) trackCleanup() {
+	virtualMachineService.cleanupWG.Add(1)
+}
+
+func (virtualMachineService *VirtualMachineService) cleanupDone() {
+	virtualMachineService.cleanupWG.Done()
+}
+
+// Shutdown stops every running VM and waits for the per-VM cleanup goroutines
+// (which run the SDK's CNI DEL via doCleanup) to finish, so IPAM leases and TAP
+// devices are released before the worker exits. Bounded by ctx — if it expires,
+// any leases still on disk will leak and need to be swept on next start.
+func (virtualMachineService *VirtualMachineService) Shutdown(ctx context.Context) {
+	vms := virtualMachineService.ListVirtualMachines()
+	if len(vms) == 0 {
+		return
+	}
+
+	log.Printf("Shutting down %d running VM(s)", len(vms))
+	for _, vm := range vms {
+		machine := vm.GetMachine()
+		if machine == nil {
+			continue
+		}
+		if err := machine.StopVMM(); err != nil {
+			log.Printf("VM %s StopVMM error: %v", vm.GetID(), err)
+		}
+	}
+
+	done := make(chan struct{})
+	go func() {
+		virtualMachineService.cleanupWG.Wait()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		log.Printf("VM cleanup complete")
+	case <-ctx.Done():
+		log.Printf("VM cleanup timed out: %v — IPAM leases may need manual cleanup", ctx.Err())
+	case <-time.After(15 * time.Second):
+		log.Printf("VM cleanup timed out after 15s — IPAM leases may need manual cleanup")
+	}
 }
