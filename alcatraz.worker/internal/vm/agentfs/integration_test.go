@@ -26,7 +26,7 @@ func TestPrepareAndServeNFS_Lifecycle(t *testing.T) {
 	dataDir := t.TempDir()
 	agentID := "test-lifecycle"
 
-	if err := PrepareOverlay(agentID, rootfs, dataDir); err != nil {
+	if err := PrepareOverlay(t.Context(), agentID, rootfs, dataDir); err != nil {
 		t.Fatalf("PrepareOverlay: %v", err)
 	}
 	dbPath := filepath.Join(dataDir, agentID+".db")
@@ -91,7 +91,7 @@ func TestPrepareOverlay_ReinitOnStampChange(t *testing.T) {
 
 	dataDir := t.TempDir()
 	agentID := "test-reinit"
-	if err := PrepareOverlay(agentID, rootfs, dataDir); err != nil {
+	if err := PrepareOverlay(t.Context(), agentID, rootfs, dataDir); err != nil {
 		t.Fatalf("PrepareOverlay 1: %v", err)
 	}
 	dbPath := filepath.Join(dataDir, agentID+".db")
@@ -106,7 +106,7 @@ func TestPrepareOverlay_ReinitOnStampChange(t *testing.T) {
 		t.Fatal(err)
 	}
 	time.Sleep(10 * time.Millisecond)
-	if err := PrepareOverlay(agentID, rootfs, dataDir); err != nil {
+	if err := PrepareOverlay(t.Context(), agentID, rootfs, dataDir); err != nil {
 		t.Fatalf("PrepareOverlay 2: %v", err)
 	}
 	st2, err := os.Stat(dbPath)

@@ -30,7 +30,7 @@ func StartNFS(handle *OverlayHandle, bindIP string, port int) (*NFSServer, error
 		return nil, fmt.Errorf("nfs listen on %s: %w", addr, err)
 	}
 
-	billy := newBillyFS(handle.Overlay)
+	billy := newBillyFS(handle.overlay)
 	authHandler := nfshelper.NewNullAuthHandler(billy)
 	cachingHandler := nfshelper.NewCachingHandler(authHandler, 1024)
 
@@ -66,7 +66,3 @@ func (s *NFSServer) Wait() error {
 	<-s.done
 	return s.err
 }
-
-// GetProcess satisfies the legacy vm.NFSProcess interface; returns nil since
-// the server runs in-process.
-func (s *NFSServer) GetProcess() interface{} { return nil }

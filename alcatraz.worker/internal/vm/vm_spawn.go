@@ -82,7 +82,7 @@ func Spawn(
 	instance.tapDev = tapDev
 	log.Printf("Spawning VM %s (vCPUs: %d, Mem: %d MiB, index: %d)", instance.id, instance.vcpus, instance.memoryMib, index)
 
-	if err := PrepareAgentfsOverlay(instance, spawnOptions.Rootfs, spawnOptions.AgentfsData); err != nil {
+	if err := PrepareAgentfsOverlay(ctx, instance, spawnOptions.Rootfs, spawnOptions.AgentfsData); err != nil {
 		virtualMachineService.Release(index)
 		return nil, fmt.Errorf("prepare agentfs: %w", err)
 	}

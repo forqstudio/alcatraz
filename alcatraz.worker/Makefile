@@ -18,8 +18,8 @@ test-cni: build
 	@echo "=== Running CNI Cleanup Test ==="
 	@sudo rm -f /tmp/worker.log
 	@sudo touch /tmp/worker.log && sudo chmod 666 /tmp/worker.log
-	@sudo pkill -9 -f alcatraz-worker 2>/dev/null || true
-	@sudo pkill -9 -f firecracker 2>/dev/null || true
+	@sudo pkill -9 -x alcatraz-worker 2>/dev/null || true
+	@sudo pkill -9 -x firecracker 2>/dev/null || true
 	@sleep 2
 	@cd /home/dev/Workspace/alcatraz/alcatraz.worker && sudo ./bin/alcatraz-worker > /tmp/worker.log 2>&1 &
 	@sleep 3
@@ -32,7 +32,7 @@ test-cni: build
 	@ip link show alcatraz0 2>&1 | head -1 || true
 	@echo ""
 	@echo "=== Stopping VM ==="
-	@sudo pkill -TERM -f "firecracker.*test-make" 2>/dev/null || true
+	@sudo pkill -TERM -f 'firecracker.*test[-]make' 2>/dev/null || true
 	@echo "Waiting for cleanup..."
 	@sleep 10
 	@echo "=== Resources after stop (should be cleaned up) ==="

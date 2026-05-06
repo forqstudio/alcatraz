@@ -13,9 +13,9 @@ import (
 // OverlayHandle owns the AgentFS database connection and the OverlayFS
 // stitched together over the host base layer.
 type OverlayHandle struct {
-	AgentFS *sdk.AgentFS
-	Base    *HostBase
-	Overlay *sdk.OverlayFS
+	agentFS *sdk.AgentFS
+	base    *HostBase
+	overlay *sdk.OverlayFS
 }
 
 // OpenOverlay opens (or creates) the database at <dataDir>/<agentID>.db,
@@ -42,15 +42,15 @@ func OpenOverlay(ctx context.Context, agentID, rootfsPath, dataDir string) (*Ove
 		afs.Close()
 		return nil, fmt.Errorf("init overlay: %w", err)
 	}
-	return &OverlayHandle{AgentFS: afs, Base: base, Overlay: overlay}, nil
+	return &OverlayHandle{agentFS: afs, base: base, overlay: overlay}, nil
 }
 
 // Close releases the underlying database connection.
 func (h *OverlayHandle) Close() error {
-	if h == nil || h.AgentFS == nil {
+	if h == nil || h.agentFS == nil {
 		return nil
 	}
-	return h.AgentFS.Close()
+	return h.agentFS.Close()
 }
 
 // PrepareOverlay replaces `agentfs init --force --base <rootfs> <id>`.
@@ -62,7 +62,7 @@ func (h *OverlayHandle) Close() error {
 //     so the next OpenOverlay rebuilds from scratch
 //   - open + close the overlay (to materialise schema)
 //   - persist the new stamp
-func PrepareOverlay(agentID, rootfsPath, dataDir string) error {
+func PrepareOverlay(ctx context.Context, agentID, rootfsPath, dataDir string) error {
 	if err := os.MkdirAll(dataDir, 0o755); err != nil {
 		return fmt.Errorf("mkdir data dir: %w", err)
 	}
@@ -91,7 +91,6 @@ func PrepareOverlay(agentID, rootfsPath, dataDir string) error {
 
 	if needsInit {
 		log.Printf("Initializing AgentFS overlay for %s", agentID)
-		ctx := context.Background()
 		handle, err := OpenOverlay(ctx, agentID, rootfsPath, dataDir)
 		if err != nil {
 			return err
