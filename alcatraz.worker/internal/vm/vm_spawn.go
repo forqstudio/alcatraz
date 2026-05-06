@@ -3,7 +3,7 @@ package vm
 import (
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"time"
 
 	firecracker "github.com/firecracker-microvm/firecracker-go-sdk"
@@ -80,14 +80,27 @@ func Spawn(
 		Build()
 
 	instance.tapDev = tapDev
-	log.Printf("Spawning VM %s (vCPUs: %d, Mem: %d MiB, index: %d)", instance.id, instance.vcpus, instance.memoryMib, index)
-	log.Printf("VM %s allocated slot %d (tap=%s, nfs_port=%d)", instance.id, index, instance.tapDev, instance.nfsPort)
+	slog.Info("Spawning VM",
+		"vm_id", instance.id,
+		"vcpus", instance.vcpus,
+		"memory_mib", instance.memoryMib,
+		"index", index,
+	)
+	slog.Info("VM allocated slot",
+		"vm_id", instance.id,
+		"slot", index,
+		"tap", instance.tapDev,
+		"nfs_port", instance.nfsPort,
+	)
 
 	if err := PrepareAgentfsOverlay(ctx, instance, spawnOptions.Rootfs, spawnOptions.AgentfsData); err != nil {
 		virtualMachineService.Release(index)
 		return nil, fmt.Errorf("prepare agentfs: %w", err)
 	}
-	log.Printf("VM %s agentfs overlay ready (data=%s)", instance.id, spawnOptions.AgentfsData)
+	slog.Info("VM agentfs overlay ready",
+		"vm_id", instance.id,
+		"data", spawnOptions.AgentfsData,
+	)
 
 	// Determine gateway IP (NFS server address)
 	// From CNI host-local IPAM, the gateway is the first IP in the subnet (172.16.0.1 for 172.16.0.0/24)
@@ -148,7 +161,7 @@ func Spawn(
 				firecracker.Handler{
 					Name: "alcatraz.StartNFS",
 					Fn: func(ctx context.Context, m *firecracker.Machine) error {
-						log.Printf("VM %s network up, starting AgentFS NFS server", instance.id)
+						slog.Info("VM network up, starting AgentFS NFS server", "vm_id", instance.id)
 						nfsProc, err := StartAgentfsNFS(ctx, instance, spawnOptions.Rootfs, spawnOptions.AgentfsData)
 						if err != nil {
 							return fmt.Errorf("start agentfs nfs: %w", err)
@@ -165,7 +178,11 @@ func Spawn(
 		return nil, fmt.Errorf("create machine: %w", err)
 	}
 
-	log.Printf("VM %s booting Firecracker (CNI will configure %s on bridge alcatraz-bridge)", instance.id, tapDev)
+	slog.Info("VM booting Firecracker",
+		"vm_id", instance.id,
+		"tap", tapDev,
+		"bridge", "alcatraz-bridge",
+	)
 	if err := m.Start(ctx); err != nil {
 		virtualMachineService.Release(index)
 		return nil, fmt.Errorf("start machine: %w", err)
@@ -184,8 +201,13 @@ func Spawn(
 		}
 	}
 
-	log.Printf("VM %s ready (tap=%s, vm_ip=%s, gateway=%s, nfs_port=%d)",
-		instance.id, instance.tapDev, instance.GetVMIP(), instance.GetHostTapIP(), instance.nfsPort)
+	slog.Info("VM ready",
+		"vm_id", instance.id,
+		"tap", instance.tapDev,
+		"vm_ip", instance.GetVMIP(),
+		"gateway", instance.GetHostTapIP(),
+		"nfs_port", instance.nfsPort,
+	)
 
 	virtualMachineService.trackCleanup()
 	go func() {
@@ -194,17 +216,17 @@ func Spawn(
 		// Use background context so cleanup isn't cancelled when Spawn() returns
 		waitCtx := context.Background()
 		if err := m.Wait(waitCtx); err != nil {
-			log.Printf("VM %s wait error: %v", id, err)
+			slog.Error("VM wait error", "vm_id", id, "err", err)
 		}
-		log.Printf("VM %s exited, SDK should now run doCleanup() to release CNI resources", id)
+		slog.Info("VM exited, SDK should now run doCleanup() to release CNI resources", "vm_id", id)
 
 		// Give SDK time to run doCleanup()
 		time.Sleep(2 * time.Second)
 
-		log.Printf("VM %s cleanup complete, removing from service", id)
+		slog.Info("VM cleanup complete, removing from service", "vm_id", id)
 		virtualMachineService.RemoveVirtualMachine(id)
 		virtualMachineService.Release(index)
-		log.Printf("VM %s released slot %d back to pool", id, index)
+		slog.Info("VM released slot back to pool", "vm_id", id, "slot", index)
 	}()
 
 	return instance, nil

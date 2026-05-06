@@ -1,7 +1,7 @@
 package vm
 
 import (
-	"log"
+	"log/slog"
 	"os"
 	"path/filepath"
 )
@@ -14,11 +14,11 @@ const cniIPAMDir = "/var/lib/cni/networks/alcatraz-bridge"
 // allocator so the next spawn gets .10 instead of continuing past wherever
 // the previous run stopped.
 func SweepIPAM() {
-	log.Printf("IPAM sweep: scanning %s for stale leases", cniIPAMDir)
+	slog.Info("IPAM sweep: scanning for stale leases", "dir", cniIPAMDir)
 	entries, err := os.ReadDir(cniIPAMDir)
 	if err != nil {
 		if !os.IsNotExist(err) {
-			log.Printf("IPAM sweep: read %s: %v", cniIPAMDir, err)
+			slog.Error("IPAM sweep: read dir failed", "dir", cniIPAMDir, "err", err)
 		}
 		return
 	}
@@ -29,14 +29,14 @@ func SweepIPAM() {
 		}
 		path := filepath.Join(cniIPAMDir, e.Name())
 		if err := os.Remove(path); err != nil {
-			log.Printf("IPAM sweep: remove %s: %v", path, err)
+			slog.Error("IPAM sweep: remove failed", "path", path, "err", err)
 			continue
 		}
 		removed++
 	}
 	if removed > 0 {
-		log.Printf("IPAM sweep: removed %d stale entr(ies) from %s", removed, cniIPAMDir)
+		slog.Info("IPAM sweep: removed stale entries", "removed", removed, "dir", cniIPAMDir)
 	} else {
-		log.Printf("IPAM sweep: no stale entries")
+		slog.Info("IPAM sweep: no stale entries")
 	}
 }

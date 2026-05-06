@@ -2,7 +2,7 @@ package agentfs
 
 import (
 	"fmt"
-	"log"
+	"log/slog"
 	"net"
 	"strconv"
 	"sync"
@@ -43,7 +43,7 @@ func StartNFS(handle *OverlayHandle, agentID, bindIP string, port int) (*NFSServ
 		defer close(srv.done)
 		srv.err = nfs.Serve(ln, cachingHandler)
 	}()
-	log.Printf("AgentFS NFS for %s listening on %s", agentID, addr)
+	slog.Info("AgentFS NFS listening", "agent_id", agentID, "addr", addr)
 	return srv, nil
 }
 

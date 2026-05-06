@@ -4,3 +4,17 @@ services:
     ports:
       - "4222:4222"
     command: ["-js"]
+
+  seq:
+    image: datalust/seq:latest
+    environment:
+      ACCEPT_EULA: "Y"
+      SEQ_FIRSTRUN_NOAUTHENTICATION: "true"
+    ports:
+      - "8081:80"
+      - "5341:5341"
+    volumes:
+      - seq-data:/data
+
+volumes:
+  seq-data:

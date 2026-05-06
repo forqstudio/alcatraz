@@ -3,7 +3,7 @@ package nats
 import (
 	"encoding/json"
 	"fmt"
-	"log"
+	"log/slog"
 
 	"github.com/nats-io/nats.go"
 
@@ -56,21 +56,25 @@ func (subscriber *Subscriber) Start() error {
 		}
 	}()
 
-	log.Printf("Subscribed to %s (queue: %s)", subscriber.subject, subscriber.queueGroup)
+	slog.Info("Subscribed to NATS", "subject", subscriber.subject, "queue_group", subscriber.queueGroup)
 	return nil
 }
 
 func (subscriber *Subscriber) handleMessage(message *nats.Msg) {
 	var msg Message
 	if err := json.Unmarshal(message.Data, &msg); err != nil {
-		log.Printf("Failed to parse request: %v", err)
+		slog.Error("Failed to parse request", "err", err)
 		return
 	}
 
-	log.Printf("Received spawn request: id=%s vcpus=%d memory_mib=%d", msg.ID, msg.VCPUs, msg.MemoryMib)
+	slog.Info("Received spawn request",
+		"id", msg.ID,
+		"vcpus", msg.VCPUs,
+		"memory_mib", msg.MemoryMib,
+	)
 
 	if err := subscriber.handler(&msg); err != nil {
-		log.Printf("Failed to handle request: %v", err)
+		slog.Error("Failed to handle request", "err", err, "id", msg.ID)
 	}
 }
 

@@ -3,7 +3,7 @@ package agentfs
 import (
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"os"
 	"path/filepath"
 
@@ -80,7 +80,7 @@ func PrepareOverlay(ctx context.Context, agentID, rootfsPath, dataDir string) er
 	if !needsInit && currentStamp != "" && fileExists(stampPath) {
 		existing, err := os.ReadFile(stampPath)
 		if err == nil && string(existing) != currentStamp {
-			log.Printf("Rootfs changed for %s, reinitializing", agentID)
+			slog.Info("Rootfs changed, reinitializing AgentFS overlay", "agent_id", agentID)
 			os.Remove(dbPath)
 			os.Remove(dbPath + "-wal")
 			os.Remove(dbPath + "-shm")
@@ -90,14 +90,14 @@ func PrepareOverlay(ctx context.Context, agentID, rootfsPath, dataDir string) er
 	}
 
 	if needsInit {
-		log.Printf("Initializing AgentFS overlay for %s", agentID)
+		slog.Info("Initializing AgentFS overlay", "agent_id", agentID)
 		handle, err := OpenOverlay(ctx, agentID, rootfsPath, dataDir)
 		if err != nil {
 			return err
 		}
 		_ = handle.Close()
 	} else {
-		log.Printf("Reusing existing AgentFS overlay for %s (rootfs unchanged)", agentID)
+		slog.Info("Reusing existing AgentFS overlay (rootfs unchanged)", "agent_id", agentID)
 	}
 
 	if currentStamp != "" {

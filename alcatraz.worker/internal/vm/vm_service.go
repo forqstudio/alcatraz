@@ -3,7 +3,7 @@ package vm
 import (
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"sync"
 	"time"
 
@@ -257,14 +257,14 @@ func (virtualMachineService *VirtualMachineService) Shutdown(ctx context.Context
 		return
 	}
 
-	log.Printf("Shutting down %d running VM(s)", len(vms))
+	slog.Info("Shutting down running VMs", "count", len(vms))
 	for _, vm := range vms {
 		machine := vm.GetMachine()
 		if machine == nil {
 			continue
 		}
 		if err := machine.StopVMM(); err != nil {
-			log.Printf("VM %s StopVMM error: %v", vm.GetID(), err)
+			slog.Error("VM StopVMM error", "vm_id", vm.GetID(), "err", err)
 		}
 	}
 
@@ -276,10 +276,10 @@ func (virtualMachineService *VirtualMachineService) Shutdown(ctx context.Context
 
 	select {
 	case <-done:
-		log.Printf("VM cleanup complete")
+		slog.Info("VM cleanup complete")
 	case <-ctx.Done():
-		log.Printf("VM cleanup timed out: %v — IPAM leases may need manual cleanup", ctx.Err())
+		slog.Warn("VM cleanup timed out — IPAM leases may need manual cleanup", "err", ctx.Err())
 	case <-time.After(15 * time.Second):
-		log.Printf("VM cleanup timed out after 15s — IPAM leases may need manual cleanup")
+		slog.Warn("VM cleanup timed out after 15s — IPAM leases may need manual cleanup")
 	}
 }

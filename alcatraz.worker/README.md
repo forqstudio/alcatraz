@@ -7,11 +7,13 @@ This repository contains the build and launch scripts only. Generated artifacts 
 ## The Stack
 
 - Go: `1.25.0`
-- Docker: with Docker Compose (for NATS)
+- Docker: with Docker Compose (for NATS and Seq)
 - NATS: `latest` (with JetStream)
+- Seq: `latest` (structured log viewer; receives CLEF events from the worker)
 - Firecracker target: `v1.15.1`
 - AgentFS: in-process via the Go SDK (`github.com/tursodatabase/agentfs/sdk/go`); no `agentfs` CLI binary required
 - NFSv3 server: in-process via `github.com/willscott/go-nfs`
+- Logging: `log/slog` (stdlib) fanned out to stdout + Seq via a small CLEF HTTP handler in `internal/logging`
 
 ## How It Works
 
@@ -121,11 +123,13 @@ This produces `bin/alcatraz-worker` and `bin/spawn-client`.
 
 ## Run
 
-Start NATS:
+Start NATS and Seq:
 
 ```bash
 docker compose up -d
 ```
+
+Seq UI: http://localhost:8081 (auth disabled for local dev). The worker ships structured events to `localhost:5341` over CLEF.
 
 Start the worker (must run as root):
 
@@ -194,7 +198,8 @@ The worker hashes `alcatraz.core/rootfs/etc/alcatraz-release` and refuses to sil
 
 ## Runtime Notes
 
-- Worker logs to stdout by default with go logrus
+- Worker logs via `log/slog` to stdout **and** ships CLEF events to Seq when `SEQ_URL` is set (skipped silently if empty, so unit tests / spawn-client don't require Seq)
+- Logging config (read from `.env`): `SEQ_URL`, `SEQ_API_KEY`, `ENVIRONMENT`. Baseline attributes `Application` and `Environment` are attached to every event. On shutdown the Seq queue is flushed (bounded by a 2s context)
 - On VM exit, SDK's `doCleanup()` handles CNI teardown (TAP, IP, namespace); worker shuts down the in-process NFS server and removes the firecracker socket
 - If the host `firecracker` binary is missing, worker tries to resolve from PATH
 - AgentFS uses the Go SDK directly — no external `agentfs` binary or daemon

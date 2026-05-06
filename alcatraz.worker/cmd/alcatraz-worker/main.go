@@ -2,31 +2,38 @@ package main
 
 import (
 	"context"
-	"log"
+	"log/slog"
 	"os"
 	"os/signal"
 	"syscall"
 	"time"
 
+	"alcatraz.worker/internal/logging"
 	messaging "alcatraz.worker/internal/messaging"
 	virtualMachine "alcatraz.worker/internal/vm"
 )
 
 func main() {
+	shutdownLogs := logging.Init()
+
 	vmConfig := virtualMachine.GetConfig()
 
 	natsConfig, err := messaging.LoadConfig()
 	if err != nil {
-		log.Fatalf("Failed to load NATS config: %v", err)
+		logging.Fatal("Failed to load NATS config", "err", err)
 	}
 
-	log.Printf("Worker starting (firecracker=%s, rootfs=%s, kernel=%s, agentfs_data=%s)",
-		vmConfig.FirecrackerBin, vmConfig.Rootfs, vmConfig.Kernel, vmConfig.AgentfsData)
+	slog.Info("Worker starting",
+		"firecracker", vmConfig.FirecrackerBin,
+		"rootfs", vmConfig.Rootfs,
+		"kernel", vmConfig.Kernel,
+		"agentfs_data", vmConfig.AgentfsData,
+	)
 
 	virtualMachine.SweepIPAM()
 
 	mgr := virtualMachine.NewVirtualMachineService()
-	log.Printf("VM service ready (max concurrent VMs: %d)", mgr.GetMaxVMs())
+	slog.Info("VM service ready", "max_vms", mgr.GetMaxVMs())
 
 	handler := func(message *messaging.Message) error {
 		vmRequest := message.ToCreateVirtualMachineInput()
@@ -44,23 +51,27 @@ func main() {
 
 	subscriber, err := messaging.NewSubscriber(natsConfig.URL, natsConfig.Subject, natsConfig.QueueGroup, handler)
 	if err != nil {
-		log.Fatalf("Failed to create subscriber: %v", err)
+		logging.Fatal("Failed to create subscriber", "err", err)
 	}
 
 	if err := subscriber.Start(); err != nil {
-		log.Fatalf("Failed to start subscriber: %v", err)
+		logging.Fatal("Failed to start subscriber", "err", err)
 	}
 
-	log.Printf("Alcatraz Worker started, connected to %s", subscriber.URL())
+	slog.Info("Alcatraz Worker started", "nats_url", subscriber.URL())
 
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 	<-sigCh
 
-	log.Println("Shutting down...")
+	slog.Info("Shutting down")
 	subscriber.Stop()
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 	mgr.Shutdown(shutdownCtx)
+
+	flushCtx, flushCancel := context.WithTimeout(context.Background(), 2*time.Second)
+	shutdownLogs(flushCtx)
+	flushCancel()
 }
