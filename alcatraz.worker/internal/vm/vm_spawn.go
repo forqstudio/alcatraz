@@ -11,7 +11,6 @@ import (
 )
 
 type SpawnOptions struct {
-	AgentfsBin     string
 	FirecrackerBin string
 	Rootfs         string
 	Kernel         string
@@ -83,7 +82,7 @@ func Spawn(
 	instance.tapDev = tapDev
 	log.Printf("Spawning VM %s (vCPUs: %d, Mem: %d MiB, index: %d)", instance.id, instance.vcpus, instance.memoryMib, index)
 
-	if err := PrepareAgentfsOverlay(instance, spawnOptions.AgentfsBin, spawnOptions.Rootfs, spawnOptions.AgentfsData); err != nil {
+	if err := PrepareAgentfsOverlay(instance, spawnOptions.Rootfs, spawnOptions.AgentfsData); err != nil {
 		virtualMachineService.Release(index)
 		return nil, fmt.Errorf("prepare agentfs: %w", err)
 	}
@@ -147,7 +146,7 @@ func Spawn(
 				firecracker.Handler{
 					Name: "alcatraz.StartNFS",
 					Fn: func(ctx context.Context, m *firecracker.Machine) error {
-						nfsProc, err := StartAgentfsNFS(instance, spawnOptions.AgentfsBin)
+						nfsProc, err := StartAgentfsNFS(ctx, instance, spawnOptions.Rootfs, spawnOptions.AgentfsData)
 						if err != nil {
 							return fmt.Errorf("start agentfs nfs: %w", err)
 						}

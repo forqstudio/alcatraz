@@ -1,0 +1,72 @@
+package agentfs
+
+import (
+	"fmt"
+	"log"
+	"net"
+	"strconv"
+	"sync"
+
+	nfs "github.com/willscott/go-nfs"
+	nfshelper "github.com/willscott/go-nfs/helpers"
+)
+
+// NFSServer is a long-lived NFSv3 server bound to a single AgentFS overlay.
+// It implements the worker's vm.NFSProcess interface.
+type NFSServer struct {
+	listener net.Listener
+	handle   *OverlayHandle
+	done     chan struct{}
+	err      error
+
+	once sync.Once
+}
+
+// StartNFS binds an NFSv3 listener on bindIP:port and serves the overlay until Kill.
+func StartNFS(handle *OverlayHandle, bindIP string, port int) (*NFSServer, error) {
+	addr := net.JoinHostPort(bindIP, strconv.Itoa(port))
+	ln, err := net.Listen("tcp", addr)
+	if err != nil {
+		return nil, fmt.Errorf("nfs listen on %s: %w", addr, err)
+	}
+
+	billy := newBillyFS(handle.Overlay)
+	authHandler := nfshelper.NewNullAuthHandler(billy)
+	cachingHandler := nfshelper.NewCachingHandler(authHandler, 1024)
+
+	srv := &NFSServer{
+		listener: ln,
+		handle:   handle,
+		done:     make(chan struct{}),
+	}
+	go func() {
+		defer close(srv.done)
+		srv.err = nfs.Serve(ln, cachingHandler)
+	}()
+	log.Printf("AgentFS NFS listening on %s", addr)
+	return srv, nil
+}
+
+// Kill closes the listener and overlay. Idempotent.
+func (s *NFSServer) Kill() error {
+	var err error
+	s.once.Do(func() {
+		if s.listener != nil {
+			err = s.listener.Close()
+		}
+		if s.handle != nil {
+			_ = s.handle.Close()
+		}
+	})
+	return err
+}
+
+// Wait blocks until the server goroutine has exited.
+func (s *NFSServer) Wait() error {
+	<-s.done
+	return s.err
+}
+
+// GetProcess satisfies the legacy vm.NFSProcess interface; returns nil since
+// the server runs in-process.
+func (s *NFSServer) GetProcess() interface{} { return nil }

@@ -24,7 +24,6 @@ func main() {
 	handler := func(message *messaging.Message) error {
 		vmRequest := message.ToCreateVirtualMachineInput()
 		options := &virtualMachine.SpawnOptions{
-			AgentfsBin:     vmConfig.AgentfsBin,
 			FirecrackerBin: vmConfig.FirecrackerBin,
 			Rootfs:         vmConfig.Rootfs,
 			Kernel:         vmConfig.Kernel,

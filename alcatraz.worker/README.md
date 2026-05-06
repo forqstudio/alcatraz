@@ -10,17 +10,18 @@ This repository contains the build and launch scripts only. Generated artifacts 
 - Docker: with Docker Compose (for NATS)
 - NATS: `latest` (with JetStream)
 - Firecracker target: `v1.15.1`
-- AgentFS target: `v0.6.4`
+- AgentFS: in-process via the Go SDK (`github.com/tursodatabase/agentfs/sdk/go`); no `agentfs` CLI binary required
+- NFSv3 server: in-process via `github.com/willscott/go-nfs`
 
 ## How It Works
 
 1. Worker subscribes to NATS `vm.spawn` subject with queue group for load balancing
 2. On VM request, worker allocates an available slot
 3. Worker configures `CNIConfiguration` for the Firecracker SDK; on VM start, the SDK invokes CNI plugins (bridge, host-local IPAM, tc-redirect-tap) which handle TAP creation, IP allocation, and NAT automatically
-4. Worker initializes or reuses an AgentFS overlay in `.agentfs/<agent-id>.db`
-5. Worker starts AgentFS NFS server exporting the overlay on the bridge gateway IP
-6. Worker spawns Firecracker VM with root=/dev/nfs pointing to the AgentFS NFS export
-7. On VM exit, the SDK's `doCleanup()` invokes CNI DEL to release TAP, IP, and namespace; worker cleans up NFS process and releases the slot
+4. Worker initializes or reuses an AgentFS overlay in `.agentfs/<agent-id>.db` via the AgentFS Go SDK (no subprocess)
+5. Worker starts an in-process NFSv3 server bound to the bridge gateway IP, exporting the overlay (host rootfs as read-only base layer + per-VM SQLite delta)
+6. Worker spawns Firecracker VM with `root=/dev/nfs` pointing to that NFS export
+7. On VM exit, the SDK's `doCleanup()` invokes CNI DEL to release TAP, IP, and namespace; worker shuts down the NFS server goroutine and releases the slot
 
 The practical effect is:
 - VMs can be spawned on-demand via NATS messages
@@ -34,11 +35,12 @@ The practical effect is:
 You need these on the host:
 - Ubuntu or another Linux host with `sudo`
 - KVM / Firecracker support
-- `agentfs` installed on the host and available on `PATH`
 - `firecracker` binary available (auto-resolved to v1.15.1 or PATH)
 - NATS server running
 - CNI plugins installed at `/opt/cni/bin` (bridge, host-local, tc-redirect-tap)
 - CNI conflist installed at `/etc/cni/net.d/alcatraz-bridge.conflist`
+
+The AgentFS overlay and NFS server run in-process inside the worker — no separate `agentfs` daemon or CLI binary needs to be installed.
 
 The worker requires `sudo` for CNI networking operations.
 
@@ -79,8 +81,8 @@ Worker-side:
 - VM service with slot allocation
 - CNI-based networking (via Firecracker SDK CNIConfiguration)
 - SDK-managed cleanup (CNI DEL on VM exit)
-- AgentFS overlay initialization
-- AgentFS NFS server process
+- AgentFS overlay initialization (in-process, AgentFS Go SDK)
+- In-process NFSv3 server (`willscott/go-nfs` over a billy adapter that wraps the AgentFS overlay)
 - Firecracker VM lifecycle
 
 VM-side (delegated to alcatraz.core):
@@ -138,7 +140,6 @@ sudo ./bin/alcatraz-worker
 --subject string       NATS subject (default "vm.spawn")
 --max-vms int          Max concurrent VMs (default 5)
 --queue-group string   NATS queue group (default "vm-workers")
---agentfs-bin string   Path to agentfs binary (auto-resolved)
 --firecracker-bin      Path to firecracker (auto-resolved to v1.15.1)
 --rootfs string        Rootfs path (default "../alcatraz.core/rootfs")
 --kernel string        Kernel path (default "../alcatraz.core/linux-amazon/vmlinux")
@@ -194,19 +195,19 @@ The worker hashes `alcatraz.core/rootfs/etc/alcatraz-release` and refuses to sil
 ## Runtime Notes
 
 - Worker logs to stdout by default with go logrus
-- On VM exit, SDK's `doCleanup()` handles CNI teardown (TAP, IP, namespace); worker cleans up NFS process and socket
+- On VM exit, SDK's `doCleanup()` handles CNI teardown (TAP, IP, namespace); worker shuts down the in-process NFS server and removes the firecracker socket
 - If the host `firecracker` binary is missing, worker tries to resolve from PATH
-- The host `agentfs` binary is auto-resolved from PATH or common locations
+- AgentFS uses the Go SDK directly — no external `agentfs` binary or daemon
 - Worker uses queue-based subscription for load balancing across multiple workers
 - Slot allocation is atomic; returns error if no slots available (max VMs reached)
 
-See [docs/cni-migration.md](docs/cni-migration.md) for CNI networking architecture and [docs/network-isolation.md](docs/network-isolation.md) for historical network isolation notes.
+See [docs/cni-migration.md](docs/cni-migration.md) for CNI networking architecture, [docs/remove-cli-commands.md](docs/remove-cli-commands.md) for the in-process AgentFS/NFS rewrite, and [docs/network-isolation.md](docs/network-isolation.md) for historical network isolation notes.
 
 ## Useful Overrides
 
 ```bash
 sudo ./bin/alcatraz-worker --max-vms 10 --nats-url nats://nats.internal:4222
-sudo ./bin/alcatraz-worker --queue-group prod-workers --agentfs-bin /usr/local/bin/agentfs
+sudo ./bin/alcatraz-worker --queue-group prod-workers --rootfs ../alcatraz.core/rootfs
 ```
 
 ```bash

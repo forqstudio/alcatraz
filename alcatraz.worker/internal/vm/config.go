@@ -13,7 +13,6 @@ const (
 	KernelPath     = "../alcatraz.core/linux-amazon/vmlinux"
 	RootfsPath     = "../alcatraz.core/rootfs"
 	AgentfsData    = "../alcatraz.core/.agentfs"
-	AgentfsBin     = "/home/dev/.cargo/bin/agentfs"
 	CNIConfDir     = "/etc/cni/net.d"
 
 	VMHostname = "alcatraz"
@@ -27,7 +26,6 @@ const (
 type VirtualMachineConfig struct {
 	MaxVMs         int
 	CNIConfDir     string
-	AgentfsBin     string
 	AgentfsData    string
 	FirecrackerBin string
 	Rootfs         string
@@ -37,7 +35,6 @@ type VirtualMachineConfig struct {
 func DefaultConfig() *VirtualMachineConfig {
 	return &VirtualMachineConfig{
 		MaxVMs:         DefaultMaxVMs,
-		AgentfsBin:     AgentfsBin,
 		FirecrackerBin: FirecrackerBin,
 		Rootfs:         RootfsPath,
 		Kernel:         KernelPath,

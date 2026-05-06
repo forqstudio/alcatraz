@@ -10,9 +10,6 @@ func TestDefaultConfig(t *testing.T) {
 	if cfg.MaxVMs != DefaultMaxVMs {
 		t.Errorf("MaxVMs = %d, want %d", cfg.MaxVMs, DefaultMaxVMs)
 	}
-	if cfg.AgentfsBin != AgentfsBin {
-		t.Errorf("AgentfsBin = %s, want %s", cfg.AgentfsBin, AgentfsBin)
-	}
 	if cfg.FirecrackerBin != FirecrackerBin {
 		t.Errorf("FirecrackerBin = %s, want %s", cfg.FirecrackerBin, FirecrackerBin)
 	}
