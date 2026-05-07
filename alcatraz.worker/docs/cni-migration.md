@@ -33,7 +33,7 @@ Each VM gets:
 - **Unique VMID** (from `instance.id`) → used as CNI `containerID`
 - **Unique TAP device** (e.g., `fc-tap0`, `fc-tap1`, `fc-tap2`) → passed as CNI `IfName`
 
-From `vm_spawn.go`:
+From `spawn.go` (named `vm_spawn.go` when this doc was written):
 ```go
 tapDev := fmt.Sprintf("fc-tap%d", index)
 // ...
@@ -59,7 +59,7 @@ The `bridge` plugin:
 - **Note:** VMs can communicate with each other via the shared bridge -- there is no inter-VM isolation (see [network-isolation.md](network-isolation.md))
 
 ### VM Slot Management
-The `IntPool` in `vm_service.go`:
+The `IntPool` in `machine.go` (then `vm_service.go`):
 - Manages available VM slots (0 to maxVMs-1)
 - Ensures unique indices are allocated
 - Releases indices when VMs stop
@@ -118,7 +118,7 @@ Uses CNI list format with chained plugins:
 }
 ```
 
-### 2. VM Configuration (`internal/vm/vm_spawn.go`)
+### 2. VM Configuration (`internal/vm/spawn.go`, then `vm_spawn.go`)
 
 Uses `CNIConfiguration` instead of manual network setup:
 
@@ -158,8 +158,8 @@ The SDK automatically:
 ### Files Modified
 | File | Change |
 |------|--------|
-| `internal/vm/vm_spawn.go` | Use `CNIConfiguration`, remove `SetupTAPDev()`, `SetupNAT()`, `SetupIsolationRules()` |
-| `internal/vm/vm_service.go` | Remove `ipamClient`, `AllocateNetwork()`, `ReleaseNetwork()` |
+| `internal/vm/spawn.go` (was `vm_spawn.go`) | Use `CNIConfiguration`, remove `SetupTAPDev()`, `SetupNAT()`, `SetupIsolationRules()` |
+| `internal/vm/machine.go` (was `vm_service.go`) | Remove `ipamClient`, `AllocateNetwork()`, `ReleaseNetwork()` |
 
 ### Flow: VM Spawn (New)
 

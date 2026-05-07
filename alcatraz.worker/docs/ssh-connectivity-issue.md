@@ -35,7 +35,7 @@ TAP devices aren't being deleted when VMs exit (permission issues without sudo).
 ## Fixes Applied
 
 ### Fix 1: Remove eth0:off dependency
-In `internal/vm/vm_spawn.go`, change:
+In `internal/vm/spawn.go` (named `vm_spawn.go` at the time), change:
 ```
 eth0:off  ->  eth0
 ```

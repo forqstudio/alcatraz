@@ -70,7 +70,7 @@ because the process isn't alive.
 - **Single worker per host.** The sweep wipes the IPAM dir for the
   `alcatraz-bridge` network unconditionally. Two workers sharing the same
   bridge would step on each other — but the worker isn't multi-instance-safe
-  today anyway (the NFS port allocation in `vm_spawn.go` and `vm_service.go`
+  today anyway (the NFS port allocation in `spawn.go` and `machine.go`
   hardcodes `8000 + index` from a per-process index pool, so two workers
   would already collide on port 8000). If multi-worker support is ever
   added, the sweep must become aware of other workers' live leases.
@@ -101,7 +101,7 @@ refuse the spawn long before that.
 
 - `internal/vm/cni_sweep.go` — the sweep itself.
 - `cmd/alcatraz-worker/main.go` — invocation site at worker startup.
-- `internal/vm/vm_service.go` — `Shutdown` / cleanup `WaitGroup` for the
+- `internal/vm/machine.go` — `Shutdown` / cleanup `WaitGroup` for the
   graceful-exit path.
-- `internal/vm/vm_spawn.go` — per-VM `m.Wait` cleanup goroutine.
+- `internal/vm/spawn.go` — per-VM `m.Wait` cleanup goroutine.
 - `docs/cni-cleanup-fix.md` — the earlier per-VM cleanup fix this builds on.

@@ -77,7 +77,7 @@ ip link show alcatraz0
 
 ## What Was Fixed
 
-The issue was in `/home/dev/Workspace/alcatraz/alcatraz.worker/internal/vm/vm_spawn.go`:
+The issue was in `/home/dev/Workspace/alcatraz/alcatraz.worker/internal/vm/spawn.go` (then named `vm_spawn.go`):
 
 **Before:**
 ```go
@@ -110,7 +110,7 @@ The Firecracker Go SDK's `doCleanup()` calls CNI DEL which removes:
 - Network namespaces
 
 ## Files Changed
-- `alcatraz.worker/internal/vm/vm_spawn.go` - Fixed context issue
+- `alcatraz.worker/internal/vm/spawn.go` (named `vm_spawn.go` at the time) - Fixed context issue
 - `alcatraz.worker/scripts/test-cni-cleanup.sh` - Interactive test
 - `alcatraz.worker/scripts/test-cni-cleanup-auto.sh` - Automated test
 - `alcatraz.worker/docs/cni-cleanup-fix.md` - Documentation

@@ -1,6 +1,11 @@
 # Remove CLI command invocations from the Go worker
 
 > **Status:** Implemented. All four `os/exec` call sites have been removed and replaced with in-process Go code in `internal/vm/agentfs/`. The worker no longer requires the `agentfs` CLI binary on `PATH`. See "Implementation summary" at the bottom for the as-built layout.
+>
+> **Post-landing changes** (the rest of this doc reflects state at the time of the original PR):
+> - `internal/vm/agentfs_service.go` was deleted. `PrepareAgentfsOverlay` was a thin forwarder and is now inlined as `agentfs.PrepareOverlay` at the call site in `spawn.go`. `StartAgentfsNFS` was promoted into the `agentfs` package as `agentfs.OpenAndServe` (in `agentfs/nfs_server.go`).
+> - `internal/vm/vm_service.go` → `internal/vm/machine.go`
+> - `internal/vm/vm_spawn.go` → `internal/vm/spawn.go`
 
 ## Context
 

@@ -9,7 +9,7 @@ When a VM (Firecracker microVM) was stopped, the CNI (Container Network Interfac
 
 ## Root Cause
 
-The issue was in `/home/dev/Workspace/alcatraz/alcatraz.worker/internal/vm/vm_spawn.go` in the goroutine that handles VM exit:
+The issue was in `/home/dev/Workspace/alcatraz/alcatraz.worker/internal/vm/spawn.go` (then named `vm_spawn.go`) in the goroutine that handles VM exit:
 
 ```go
 go func() {
@@ -96,7 +96,7 @@ Expected results:
 
 ## Files Changed
 
-- `alcatraz.worker/internal/vm/vm_spawn.go`:
+- `alcatraz.worker/internal/vm/spawn.go` (named `vm_spawn.go` at the time):
   - Added `context` and `time` imports
   - Changed `m.Wait(ctx)` to `m.Wait(context.Background())`
   - Added debug logging and small delay for cleanup verification
