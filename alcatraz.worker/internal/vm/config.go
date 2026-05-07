@@ -4,8 +4,6 @@ import (
 	"github.com/google/uuid"
 )
 
-const EnvFile = ".env"
-
 const (
 	DefaultMaxVMs = 5
 
@@ -13,7 +11,13 @@ const (
 	KernelPath     = "../alcatraz.core/linux-amazon/vmlinux"
 	RootfsPath     = "../alcatraz.core/rootfs"
 	AgentfsData    = "../alcatraz.core/.agentfs"
-	CNIConfDir     = "/etc/cni/net.d"
+
+	CNIConfDir  = "/etc/cni/net.d"
+	CNIBinDir   = "/opt/cni/bin"
+	BridgeName  = "alcatraz-bridge"
+	SubnetCIDR  = "172.16.0.0/24"
+	GatewayIP   = "172.16.0.1"
+	NFSBasePort = 8000
 
 	VMHostname = "alcatraz"
 	GuestMAC   = "AA:FC:00:00:00:01"
@@ -43,12 +47,6 @@ func DefaultConfig() *VirtualMachineConfig {
 	}
 }
 
-var defaultConfig = DefaultConfig()
-
-func GetConfig() *VirtualMachineConfig {
-	return defaultConfig
-}
-
 type CreateVirtualMachineInput struct {
 	ID         string `json:"id,omitempty"`
 	VCPUs      int    `json:"vcpus,omitempty"`
@@ -56,12 +54,9 @@ type CreateVirtualMachineInput struct {
 	KernelArgs string `json:"kernel_args,omitempty"`
 }
 
-func (input *CreateVirtualMachineInput) WithDefaults() *CreateVirtualMachineInput {
-	input.Validate()
-	return input
-}
-
-func (input *CreateVirtualMachineInput) Validate() error {
+// applyDefaults fills any zero-valued fields with their package defaults.
+// Mutates the receiver.
+func (input *CreateVirtualMachineInput) applyDefaults() {
 	if input.ID == "" {
 		input.ID = uuid.New().String()
 	}
@@ -74,5 +69,4 @@ func (input *CreateVirtualMachineInput) Validate() error {
 	if input.KernelArgs == "" {
 		input.KernelArgs = DefaultKernelArgs
 	}
-	return nil
 }

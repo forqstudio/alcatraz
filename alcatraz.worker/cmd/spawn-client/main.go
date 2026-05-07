@@ -8,9 +8,10 @@ import (
 	"log/slog"
 	"time"
 
-	messaging "github.com/nats-io/nats.go"
+	"github.com/nats-io/nats.go"
 
 	"alcatraz.worker/internal/logging"
+	"alcatraz.worker/internal/vm"
 )
 
 const (
@@ -19,20 +20,13 @@ const (
 )
 
 var (
-	natsURL          string
-	natsSubject      string
-	virtualMachineId string
-	vcpus            int
-	memory           int
-	kernelArgs       string
+	natsURL     string
+	natsSubject string
+	vmID        string
+	vcpus       int
+	memory      int
+	kernelArgs  string
 )
-
-type VMRequest struct {
-	ID         string `json:"id,omitempty"`
-	VCPUs      int    `json:"vcpus,omitempty"`
-	MemoryMib  int    `json:"memory_mib,omitempty"`
-	KernelArgs string `json:"kernel_args,omitempty"`
-}
 
 func main() {
 	shutdownLogs := logging.Init()
@@ -44,7 +38,7 @@ func main() {
 
 	flag.StringVar(&natsURL, "nats-url", defaultURL, "NATS server URL")
 	flag.StringVar(&natsSubject, "subject", defaultSubject, "NATS subject to publish to")
-	flag.StringVar(&virtualMachineId, "id", "", "VM ID (auto-generated if omitted)")
+	flag.StringVar(&vmID, "id", "", "VM ID (auto-generated if omitted)")
 	flag.IntVar(&vcpus, "vcpus", 0, "vCPU count (default: 4)")
 	flag.IntVar(&memory, "mem", 0, "Memory in MiB (default: 8192)")
 	flag.StringVar(&kernelArgs, "kernel-args", "", "Kernel boot args")
@@ -58,8 +52,8 @@ func main() {
 		memory = 0
 	}
 
-	vmRequest := VMRequest{
-		ID:         virtualMachineId,
+	vmRequest := vm.CreateVirtualMachineInput{
+		ID:         vmID,
 		VCPUs:      vcpus,
 		MemoryMib:  memory,
 		KernelArgs: kernelArgs,
@@ -70,7 +64,7 @@ func main() {
 		logging.Fatal("Failed to marshal request", "err", err)
 	}
 
-	connection, err := messaging.Connect(natsURL)
+	connection, err := nats.Connect(natsURL)
 	if err != nil {
 		logging.Fatal("Failed to connect to NATS", "err", err, "nats_url", natsURL)
 	}

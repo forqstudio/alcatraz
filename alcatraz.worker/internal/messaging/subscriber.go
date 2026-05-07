@@ -1,16 +1,16 @@
-package nats
+package messaging
 
 import (
-	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 
 	"github.com/nats-io/nats.go"
-
-	"alcatraz.worker/internal/vm"
 )
 
-type MessageHandler func(*Message) error
+// MessageHandler receives the raw NATS message payload. The subscriber is
+// payload-agnostic; deserialization is the caller's responsibility.
+type MessageHandler func(data []byte) error
 
 type Subscriber struct {
 	nc         *nats.Conn
@@ -21,11 +21,11 @@ type Subscriber struct {
 }
 
 func NewSubscriber(
-	natsUrl,
+	natsURL,
 	natsSubject,
 	natsQueueGroup string,
 	messageHandler MessageHandler) (*Subscriber, error) {
-	natsConnection, err := nats.Connect(natsUrl)
+	natsConnection, err := nats.Connect(natsURL)
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to NATS: %w", err)
 	}
@@ -38,79 +38,43 @@ func NewSubscriber(
 	}, nil
 }
 
-func (subscriber *Subscriber) Start() error {
+func (s *Subscriber) Start() error {
 	channel := make(chan *nats.Msg, 64)
-	sub, err := subscriber.nc.ChanQueueSubscribe(
-		subscriber.subject,
-		subscriber.queueGroup,
-		channel)
-
+	sub, err := s.nc.ChanQueueSubscribe(s.subject, s.queueGroup, channel)
 	if err != nil {
 		return fmt.Errorf("failed to subscribe: %w", err)
 	}
-	subscriber.sub = sub
+	s.sub = sub
 
 	go func() {
 		for msg := range channel {
-			subscriber.handleMessage(msg)
+			if err := s.handler(msg.Data); err != nil {
+				slog.Error("Failed to handle request", "err", err)
+			}
 		}
 	}()
 
-	slog.Info("Subscribed to NATS", "subject", subscriber.subject, "queue_group", subscriber.queueGroup)
+	slog.Info("Subscribed to NATS", "subject", s.subject, "queue_group", s.queueGroup)
 	return nil
 }
 
-func (subscriber *Subscriber) handleMessage(message *nats.Msg) {
-	var msg Message
-	if err := json.Unmarshal(message.Data, &msg); err != nil {
-		slog.Error("Failed to parse request", "err", err)
-		return
+// Stop unsubscribes and drains the NATS connection. Returns the joined error
+// from the unsubscribe + drain calls so callers can decide how to surface
+// shutdown failures.
+func (s *Subscriber) Stop() error {
+	var unsubErr, drainErr error
+	if s.sub != nil {
+		unsubErr = s.sub.Unsubscribe()
 	}
-
-	slog.Info("Received spawn request",
-		"id", msg.ID,
-		"vcpus", msg.VCPUs,
-		"memory_mib", msg.MemoryMib,
-	)
-
-	if err := subscriber.handler(&msg); err != nil {
-		slog.Error("Failed to handle request", "err", err, "id", msg.ID)
+	if s.nc != nil {
+		drainErr = s.nc.Drain()
 	}
+	return errors.Join(unsubErr, drainErr)
 }
 
-func (subscriber *Subscriber) Stop() error {
-	if subscriber.sub != nil {
-		subscriber.sub.Unsubscribe()
-	}
-	if subscriber.nc != nil {
-		subscriber.nc.Drain()
-	}
-	return nil
-}
-
-func (subscriber *Subscriber) URL() string {
-	if subscriber.nc != nil {
-		return subscriber.nc.ConnectedUrl()
+func (s *Subscriber) URL() string {
+	if s.nc != nil {
+		return s.nc.ConnectedUrl()
 	}
 	return ""
-}
-
-func (subscriber *Subscriber) IsConnected() bool {
-	return subscriber.nc != nil && subscriber.nc.IsConnected()
-}
-
-type Message struct {
-	ID         string `json:"id,omitempty"`
-	VCPUs      int    `json:"vcpus,omitempty"`
-	MemoryMib  int    `json:"memory_mib,omitempty"`
-	KernelArgs string `json:"kernel_args,omitempty"`
-}
-
-func (message *Message) ToCreateVirtualMachineInput() *vm.CreateVirtualMachineInput {
-	return &vm.CreateVirtualMachineInput{
-		ID:         message.ID,
-		VCPUs:      message.VCPUs,
-		MemoryMib:  message.MemoryMib,
-		KernelArgs: message.KernelArgs,
-	}
 }

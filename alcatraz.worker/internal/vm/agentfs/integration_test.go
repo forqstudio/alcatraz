@@ -113,8 +113,9 @@ func TestPrepareOverlay_ReinitOnStampChange(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !st2.ModTime().After(st1.ModTime()) && st1.Size() == st2.Size() {
-		// The DB was not recreated (mtime should advance from rebuild).
+	if !st2.ModTime().After(st1.ModTime()) {
+		// The DB was not recreated. The setup sleeps 10ms before the second
+		// PrepareOverlay specifically to make a real rebuild observable in mtime.
 		t.Errorf("expected DB rebuild on stamp mismatch; mtimes %v -> %v", st1.ModTime(), st2.ModTime())
 	}
 }

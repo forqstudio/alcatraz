@@ -8,6 +8,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"os"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -138,12 +139,22 @@ func (h *seqHandler) run() {
 		}
 	}
 
+	var lastReportedDrops uint64
+	reportDrops := func() {
+		current := h.s.dropped.Load()
+		if current > lastReportedDrops {
+			fmt.Fprintf(os.Stderr, "seq: dropped %d events (queue full)\n", current-lastReportedDrops)
+			lastReportedDrops = current
+		}
+	}
+
 	for {
 		select {
 		case p := <-h.s.queue:
 			enqueue(p)
 		case <-ticker.C:
 			flush()
+			reportDrops()
 		case <-h.s.ctx.Done():
 			for {
 				select {
@@ -151,6 +162,7 @@ func (h *seqHandler) run() {
 					enqueue(p)
 				default:
 					flush()
+					reportDrops()
 					return
 				}
 			}
@@ -166,6 +178,7 @@ func (h *seqHandler) send(batch [][]byte) {
 	}
 	req, err := http.NewRequest(http.MethodPost, h.s.url, &body)
 	if err != nil {
+		fmt.Fprintf(os.Stderr, "seq: build request failed: %v\n", err)
 		return
 	}
 	req.Header.Set("Content-Type", "application/vnd.serilog.clef")
@@ -174,22 +187,28 @@ func (h *seqHandler) send(batch [][]byte) {
 	}
 	resp, err := h.s.client.Do(req)
 	if err != nil {
+		fmt.Fprintf(os.Stderr, "seq: post to %s failed: %v\n", h.s.url, err)
 		return
 	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		fmt.Fprintf(os.Stderr, "seq: post to %s returned %s\n", h.s.url, resp.Status)
+	}
 	_, _ = io.Copy(io.Discard, resp.Body)
-	_ = resp.Body.Close()
 }
 
 func clefLevel(l slog.Level) string {
-	switch {
-	case l <= slog.LevelDebug:
+	switch l {
+	case slog.LevelDebug:
 		return "Debug"
-	case l < slog.LevelWarn:
+	case slog.LevelInfo:
 		return "Information"
-	case l < slog.LevelError:
+	case slog.LevelWarn:
 		return "Warning"
-	default:
+	case slog.LevelError:
 		return "Error"
+	default:
+		return "Information"
 	}
 }
 

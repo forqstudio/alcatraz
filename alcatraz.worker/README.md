@@ -137,18 +137,21 @@ Start the worker (must run as root):
 sudo ./bin/alcatraz-worker
 ```
 
-## CLI Flags
+## Configuration
 
-```bash
---nats-url string       NATS URL (default "nats://localhost:4222")
---subject string       NATS subject (default "vm.spawn")
---max-vms int          Max concurrent VMs (default 5)
---queue-group string   NATS queue group (default "vm-workers")
---firecracker-bin      Path to firecracker (auto-resolved to v1.15.1)
---rootfs string        Rootfs path (default "../alcatraz.core/rootfs")
---kernel string        Kernel path (default "../alcatraz.core/linux-amazon/vmlinux")
---agentfs-dir string   AgentFS overlay directory (default "../alcatraz.core/.agentfs")
-```
+The worker is configured entirely via environment variables (loaded from `.env`
+if present — a missing `.env` is not an error). VM-side defaults live in
+`internal/vm/config.go` as constants and are not currently overridable via env.
+
+| Var | Default | Notes |
+|---|---|---|
+| `NATS_URL` | `nats://localhost:4222` | NATS server URL |
+| `NATS_SUBJECT` | `vm.spawn` | Subject the worker subscribes to |
+| `NATS_QUEUE_GROUP` | `vm-workers` | NATS queue group for load balancing |
+| `SEQ_URL` | _(empty)_ | If set, ship CLEF events to Seq at this URL |
+| `SEQ_API_KEY` | _(empty)_ | Optional Seq API key |
+| `APPLICATION` | `alcatraz-worker` | Tag attached to every log event |
+| `ENVIRONMENT` | `development` | Tag attached to every log event |
 
 ## Spawn a VM
 
@@ -210,10 +213,13 @@ See [docs/cni-migration.md](docs/cni-migration.md) for CNI networking architectu
 
 ## Useful Overrides
 
+The worker reads NATS settings from env vars (see [Configuration](#configuration)):
+
 ```bash
-sudo ./bin/alcatraz-worker --max-vms 10 --nats-url nats://nats.internal:4222
-sudo ./bin/alcatraz-worker --queue-group prod-workers --rootfs ../alcatraz.core/rootfs
+NATS_URL=nats://nats.internal:4222 NATS_QUEUE_GROUP=prod-workers sudo -E ./bin/alcatraz-worker
 ```
+
+`spawn-client` keeps its CLI flags:
 
 ```bash
 ./bin/spawn-client -id my-vm -vcpus 8 -mem 16384

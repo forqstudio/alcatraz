@@ -15,7 +15,7 @@ func TestDefaultConfig(t *testing.T) {
 	}
 }
 
-func TestRequestValidate(t *testing.T) {
+func TestApplyDefaults(t *testing.T) {
 	tests := []struct {
 		name      string
 		req       CreateVirtualMachineInput
@@ -42,10 +42,7 @@ func TestRequestValidate(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := tt.req.Validate()
-			if err != nil {
-				t.Fatalf("Validate() error = %v", err)
-			}
+			tt.req.applyDefaults()
 			if tt.wantID && tt.req.ID == "" {
 				t.Error("expected ID to be set")
 			}

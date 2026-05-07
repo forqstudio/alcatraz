@@ -1,6 +1,7 @@
 package agentfs
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"net"
@@ -20,6 +21,22 @@ type NFSServer struct {
 	err      error
 
 	once sync.Once
+}
+
+// OpenAndServe opens the overlay for agentID and starts an NFSv3 server bound
+// to bindIP:port. On a failure to start the server, the overlay is closed
+// before returning. Mirrors http.ListenAndServe in shape.
+func OpenAndServe(ctx context.Context, agentID, bindIP string, port int, rootfsPath, dataDir string) (*NFSServer, error) {
+	handle, err := OpenOverlay(ctx, agentID, rootfsPath, dataDir)
+	if err != nil {
+		return nil, err
+	}
+	srv, err := StartNFS(handle, agentID, bindIP, port)
+	if err != nil {
+		_ = handle.Close()
+		return nil, err
+	}
+	return srv, nil
 }
 
 // StartNFS binds an NFSv3 listener on bindIP:port and serves the overlay until Kill.

@@ -20,7 +20,8 @@ var (
 // Init configures slog as the default logger, fanning records out to stdout
 // (text format) and — when SEQ_URL is set — to Seq via CLEF over HTTP. It
 // returns a Closer that flushes any pending Seq events; callers should defer
-// it with a bounded context.
+// it with a bounded context. The Closer is safe to call when SEQ_URL is unset
+// (it is a no-op).
 func Init() Closer {
 	_ = godotenv.Load(".env")
 

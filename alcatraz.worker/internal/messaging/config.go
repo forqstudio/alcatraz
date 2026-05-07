@@ -1,6 +1,9 @@
-package nats
+package messaging
 
 import (
+	"errors"
+	"fmt"
+	"io/fs"
 	"os"
 
 	"github.com/joho/godotenv"
@@ -20,13 +23,15 @@ type Config struct {
 	QueueGroup string
 }
 
+// LoadConfig returns the messaging config. It starts from DefaultConfig() and
+// overlays any NATS_* env vars (loaded from .env if present). A missing .env
+// is not an error.
 func LoadConfig() (*Config, error) {
-	if err := godotenv.Load(EnvFile); err != nil {
-		return nil, err
+	if err := godotenv.Load(EnvFile); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return nil, fmt.Errorf("load %s: %w", EnvFile, err)
 	}
 
-	cfg := &Config{}
-
+	cfg := DefaultConfig()
 	if v := os.Getenv("NATS_URL"); v != "" {
 		cfg.URL = v
 	}
@@ -36,7 +41,6 @@ func LoadConfig() (*Config, error) {
 	if v := os.Getenv("NATS_QUEUE_GROUP"); v != "" {
 		cfg.QueueGroup = v
 	}
-
 	return cfg, nil
 }
 

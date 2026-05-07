@@ -1,7 +1,6 @@
 package agentfs
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -359,21 +358,33 @@ func normalizePath(p string) string {
 	return cleaned
 }
 
+// errSubstrings lists the substrings translateErr matches against. This is
+// brittle — any wording change in the AgentFS SDK silently breaks the
+// classification.
+//
+// FIXME: switch to errors.Is against typed sentinels exported by the SDK once
+// the SDK provides them.
+var (
+	errNotExistSubstrings = []string{"no such", "not found", "ENOENT"}
+	errExistSubstrings    = []string{"exists", "EEXIST"}
+)
+
 func translateErr(err error) error {
 	if err == nil {
 		return nil
 	}
 	msg := err.Error()
-	switch {
-	case strings.Contains(msg, "no such") || strings.Contains(msg, "not found") || strings.Contains(msg, "ENOENT"):
-		return os.ErrNotExist
-	case strings.Contains(msg, "exists") || strings.Contains(msg, "EEXIST"):
-		return os.ErrExist
+	for _, s := range errNotExistSubstrings {
+		if strings.Contains(msg, s) {
+			return os.ErrNotExist
+		}
+	}
+	for _, s := range errExistSubstrings {
+		if strings.Contains(msg, s) {
+			return os.ErrExist
+		}
 	}
 	return err
 }
-
-// reused for TempFile name disambiguation
-var _ = bytes.NewReader
 
 func pid() int { return os.Getpid() }
