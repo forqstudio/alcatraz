@@ -209,7 +209,7 @@ The worker hashes `alcatraz.core/rootfs/etc/alcatraz-release` and refuses to sil
 - Worker uses queue-based subscription for load balancing across multiple workers
 - Slot allocation is atomic; returns error if no slots available (max VMs reached)
 
-See [docs/cni-migration.md](docs/cni-migration.md) for CNI networking architecture, [docs/remove-cli-commands.md](docs/remove-cli-commands.md) for the in-process AgentFS/NFS rewrite, and [docs/network-isolation.md](docs/network-isolation.md) for historical network isolation notes.
+See [docs/cni-migration.md](docs/cni-migration.md) for CNI networking architecture, [docs/remove-cli-commands.md](docs/remove-cli-commands.md) for the in-process AgentFS/NFS rewrite, [docs/agentfs-edit-flow.md](docs/agentfs-edit-flow.md) for how guest edits flow through the overlay and how to inspect or sync the delta DB, and [docs/network-isolation.md](docs/network-isolation.md) for historical network isolation notes.
 
 ## Useful Overrides
 
