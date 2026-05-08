@@ -4,9 +4,13 @@ using ForqStudio.Application.Abstractions.Caching;
 using ForqStudio.Application.Abstractions.Clock;
 using ForqStudio.Application.Abstractions.Data;
 using ForqStudio.Application.Abstractions.Email;
+using ForqStudio.Application.Abstractions.Messaging;
+using ForqStudio.Application.Abstractions.Security;
+using ForqStudio.Application.Sandboxes.IssueSshCertificate;
 using ForqStudio.Domain.Abstractions;
 using ForqStudio.Domain.Apartments;
 using ForqStudio.Domain.Bookings;
+using ForqStudio.Domain.Sandboxes;
 using ForqStudio.Domain.Users;
 using ForqStudio.Infrastructure.Authentication;
 using ForqStudio.Infrastructure.Authorization;
@@ -14,8 +18,10 @@ using ForqStudio.Infrastructure.Caching;
 using ForqStudio.Infrastructure.Clock;
 using ForqStudio.Infrastructure.Data;
 using ForqStudio.Infrastructure.Email;
+using ForqStudio.Infrastructure.Messaging;
 using ForqStudio.Infrastructure.Outbox;
 using ForqStudio.Infrastructure.Repositories;
+using ForqStudio.Infrastructure.Security;
 using Dapper;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
@@ -40,6 +46,9 @@ public static class DependencyInjection
     private const string KeycloakSection = "Keycloak";
     private const string KeycloakBaseUrlKey = "KeyCloak:BaseUrl";
     private const string OutboxSection = "Outbox";
+    private const string NatsSection = "Nats";
+    private const string GatewaySection = "Gateway";
+    private const string SshCaSection = "Ssh:CA";
 
     public static IServiceCollection AddInfrastructure(
         this IServiceCollection services,
@@ -63,7 +72,24 @@ public static class DependencyInjection
 
         AddBackgroundJobs(services, configuration);
 
+        AddSandboxIntegrations(services, configuration);
+
         return services;
+    }
+
+    private static void AddSandboxIntegrations(IServiceCollection services, IConfiguration configuration)
+    {
+        services.Configure<NatsOptions>(configuration.GetSection(NatsSection));
+
+        services.Configure<GatewayOptions>(configuration.GetSection(GatewaySection));
+
+        services.Configure<SshCertificateAuthorityOptions>(configuration.GetSection(SshCaSection));
+
+        services.AddSingleton<NatsConnectionFactory>();
+
+        services.AddSingleton<ISandboxEventPublisher, NatsSandboxEventPublisher>();
+
+        services.AddSingleton<ISshCertificateAuthority, SshKeygenCertificateAuthority>();
     }
 
     private static void AddPersistence(IServiceCollection services, IConfiguration configuration)
@@ -82,6 +108,8 @@ public static class DependencyInjection
         services.AddScoped<IApartmentRepository, ApartmentRepository>();
 
         services.AddScoped<IBookingRepository, BookingRepository>();
+
+        services.AddScoped<ISandboxRepository, SandboxRepository>();
 
         services.AddScoped<IPermissionRepository, PermissionRepository>();
 
@@ -125,6 +153,8 @@ public static class DependencyInjection
 
             httpClient.BaseAddress = new Uri(keycloakOptions.TokenUrl);
         });
+
+        services.AddHttpClient<IDeviceAuthorizationClient, KeycloakDeviceAuthorizationClient>();
 
         services.AddHttpContextAccessor();
 

@@ -1,0 +1,28 @@
+# Demo sshd config — mirrors the rootfs configuration documented in
+# plans/customer-vm-access-ssh-ca.md. Real Alcatraz VMs use the same
+# TrustedUserCAKeys + AuthorizedPrincipalsFile pair; the worker writes
+# the sandbox UUID into /etc/ssh/auth_principals/al.
+
+Port 22
+Protocol 2
+
+HostKey /etc/ssh/ssh_host_rsa_key
+HostKey /etc/ssh/ssh_host_ecdsa_key
+HostKey /etc/ssh/ssh_host_ed25519_key
+
+# CA-signed cert authentication
+TrustedUserCAKeys /etc/ssh/alcatraz_ca.pub
+AuthorizedPrincipalsFile /etc/ssh/auth_principals/%u
+RevokedKeys /etc/ssh/alcatraz_krl
+
+# Lock everything else off
+PasswordAuthentication no
+PubkeyAuthentication yes
+PermitRootLogin no
+KbdInteractiveAuthentication no
+PermitEmptyPasswords no
+UsePAM no
+
+Subsystem sftp /usr/lib/ssh/sftp-server
+
+LogLevel VERBOSE

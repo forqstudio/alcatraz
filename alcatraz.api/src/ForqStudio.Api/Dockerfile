@@ -1,4 +1,9 @@
 FROM mcr.microsoft.com/dotnet/aspnet:8.0 AS base
+# openssh-client provides the ssh-keygen binary the SSH CA shells out to.
+USER root
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends openssh-client \
+ && rm -rf /var/lib/apt/lists/*
 USER app
 WORKDIR /app
 EXPOSE 8080
