@@ -15,6 +15,8 @@ import (
 	"alcatraz.worker/internal/vm"
 )
 
+const defaultCAPubkeyPath = "/run/alcatraz-ca/alcatraz_ca.pub"
+
 func main() {
 	shutdownLogs := logging.Init()
 
@@ -25,11 +27,17 @@ func main() {
 		logging.Fatal("Failed to load NATS config", "err", err)
 	}
 
+	caPubkeyPath := os.Getenv("WORKER_CA_PUBKEY_PATH")
+	if caPubkeyPath == "" {
+		caPubkeyPath = defaultCAPubkeyPath
+	}
+
 	slog.Info("Worker starting",
 		"firecracker", vmConfig.FirecrackerBin,
 		"rootfs", vmConfig.Rootfs,
 		"kernel", vmConfig.Kernel,
 		"agentfs_data", vmConfig.AgentfsData,
+		"ca_pubkey", caPubkeyPath,
 	)
 
 	vm.SweepIPAM()
@@ -37,11 +45,23 @@ func main() {
 	mgr := vm.NewVirtualMachineService(vmConfig)
 	slog.Info("VM service ready", "max_vms", mgr.GetMaxVMs())
 
+	publisher, err := messaging.NewPublisher(natsConfig.URL, natsConfig.ReadySubject, natsConfig.DestroyedSubject)
+	if err != nil {
+		logging.Fatal("Failed to create publisher", "err", err)
+	}
+	defer func() {
+		if err := publisher.Close(); err != nil {
+			slog.Error("publisher close error", "err", err)
+		}
+	}()
+
 	options := &vm.SpawnOptions{
 		FirecrackerBin: vmConfig.FirecrackerBin,
 		Rootfs:         vmConfig.Rootfs,
 		Kernel:         vmConfig.Kernel,
 		AgentfsData:    vmConfig.AgentfsData,
+		CAPubkeyPath:   caPubkeyPath,
+		Publisher:      publisher,
 	}
 
 	handler := func(data []byte) error {
@@ -67,7 +87,11 @@ func main() {
 		logging.Fatal("Failed to start subscriber", "err", err)
 	}
 
-	slog.Info("Alcatraz Worker started", "nats_url", subscriber.URL())
+	slog.Info("Alcatraz Worker started",
+		"nats_url", subscriber.URL(),
+		"ready_subject", natsConfig.ReadySubject,
+		"destroyed_subject", natsConfig.DestroyedSubject,
+	)
 
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)

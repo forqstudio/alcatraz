@@ -19,4 +19,12 @@ public static class SandboxErrors
     public static Error InvalidStateForCertIssue = new(
         "Sandbox.InvalidStateForCertIssue",
         "Sandbox is not in a state that allows certificate issuance");
+
+    public static Error NotProvisioning = new(
+        "Sandbox.NotProvisioning",
+        "Sandbox cannot be marked Running because it is not in the Provisioning state");
+
+    public static Error NotReady = new(
+        "Sandbox.NotReady",
+        "Sandbox is not yet ready to accept connections");
 }

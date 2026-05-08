@@ -21,15 +21,22 @@ This repository contains the build and launch scripts only. Generated artifacts 
 2. On VM request, worker allocates an available slot
 3. Worker configures `CNIConfiguration` for the Firecracker SDK; on VM start, the SDK invokes CNI plugins (bridge, host-local IPAM, tc-redirect-tap) which handle TAP creation, IP allocation, and NAT automatically
 4. Worker initializes or reuses an AgentFS overlay in `.agentfs/<agent-id>.db` via the AgentFS Go SDK (no subprocess)
-5. Worker starts an in-process NFSv3 server bound to the bridge gateway IP, exporting the overlay (host rootfs as read-only base layer + per-VM SQLite delta)
-6. Worker spawns Firecracker VM with `root=/dev/nfs` pointing to that NFS export
-7. On VM exit, the SDK's `doCleanup()` invokes CNI DEL to release TAP, IP, and namespace; worker shuts down the NFS server goroutine and releases the slot
+5. Worker plants two boot-time files into the AgentFS overlay before VM start:
+   - `/etc/ssh/auth_principals/al` ← the sandbox UUID, so sshd accepts certs whose principal matches
+   - `/etc/ssh/trusted_user_ca_keys` ← contents of `WORKER_CA_PUBKEY_PATH` (the API's SSH CA pubkey)
+
+   Spawn aborts on write failure.
+6. Worker starts an in-process NFSv3 server bound to the bridge gateway IP, exporting the overlay (host rootfs as read-only base layer + per-VM SQLite delta)
+7. Worker spawns Firecracker VM with `root=/dev/nfs` pointing to that NFS export
+8. After Firecracker reports started, worker probes `vm_ip:22` until sshd accepts (10s timeout) and publishes `vm.ready` on NATS with `{id, host, port}`. `alcatraz.api` consumes this event and transitions the sandbox to `Running`; `alcatraz.routes` (when present) updates Traefik's route table.
+9. On VM exit, the SDK's `doCleanup()` invokes CNI DEL to release TAP, IP, and namespace; worker shuts down the NFS server goroutine, releases the slot, and publishes `vm.destroyed` so consumers can drop the route.
 
 The practical effect is:
 - VMs can be spawned on-demand via NATS messages
 - Multiple workers can handle load balancing via queue groups
 - Each VM gets a unique IP on a shared bridge with NFS root via AgentFS
 - CNI plugins handle all networking setup and teardown automatically
+- The worker is decoupled from `alcatraz.api`: they only share NATS subjects (`vm.spawn` / `vm.destroy` inbound, `vm.ready` / `vm.destroyed` outbound).
 - **Note:** VMs on the same worker can currently communicate with each other via the shared bridge (see [docs/network-isolation.md](docs/network-isolation.md))
 
 ## Host Requirements
@@ -41,6 +48,12 @@ You need these on the host:
 - NATS server running
 - CNI plugins installed at `/opt/cni/bin` (bridge, host-local, tc-redirect-tap)
 - CNI conflist installed at `/etc/cni/net.d/alcatraz-bridge.conflist`
+- The API's SSH CA pubkey readable at `WORKER_CA_PUBKEY_PATH` (default `/run/alcatraz-ca/alcatraz_ca.pub`). With the repo-root compose stack, copy it out of the shared volume:
+  ```bash
+  sudo install -d -m 0755 /run/alcatraz-ca
+  docker run --rm -v alcatraz_ca:/ca alpine cat /ca/alcatraz_ca.pub \
+    | sudo tee /run/alcatraz-ca/alcatraz_ca.pub > /dev/null
+  ```
 
 The AgentFS overlay and NFS server run in-process inside the worker — no separate `agentfs` daemon or CLI binary needs to be installed.
 
@@ -152,6 +165,9 @@ if present — a missing `.env` is not an error). VM-side defaults live in
 | `NATS_URL` | `nats://localhost:4222` | NATS server URL |
 | `NATS_SUBJECT` | `vm.spawn` | Subject the worker subscribes to |
 | `NATS_QUEUE_GROUP` | `vm-workers` | NATS queue group for load balancing |
+| `NATS_READY_SUBJECT` | `vm.ready` | Subject the worker publishes to after sshd is reachable |
+| `NATS_DESTROYED_SUBJECT` | `vm.destroyed` | Subject the worker publishes to after VM exit + cleanup |
+| `WORKER_CA_PUBKEY_PATH` | `/run/alcatraz-ca/alcatraz_ca.pub` | API's SSH CA pubkey, planted into each VM's overlay |
 | `SEQ_URL` | _(empty)_ | If set, ship CLEF events to Seq at this URL |
 | `SEQ_API_KEY` | _(empty)_ | Optional Seq API key |
 | `APPLICATION` | `alcatraz-worker` | Tag attached to every log event |
@@ -187,11 +203,9 @@ All fields are optional. Defaults: vcpus=4, memory_mib=8192, kernel_args="loglev
 
 ## Connect to VM
 
-```bash
-ssh dev@<VM_IP>
-```
+The customer-facing path is `alcatraz ssh <sandbox-id>` from `alcatraz.cli`, which polls the API for `Running` state, fetches a cert, and execs `ssh` against either Traefik (production) or the worker-reported VM IP (local dev).
 
-The VM IP is logged by the worker at spawn time (e.g., `172.16.0.10`). Default password: `dev`
+For low-level debugging from the worker host, you can read the VM IP from the spawn logs (`"VM ready" vm_ip=172.16.0.10 …`) and connect with a cert you minted yourself via the API. Password auth is disabled in the rootfs sshd config — the cert chain is the only auth path.
 
 ## Persistence Model
 

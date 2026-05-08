@@ -6,32 +6,37 @@ The customer-facing control plane for [Alcatraz](../README.md): device-flow logi
 
 ## Where this sits in Alcatraz
 
-`alcatraz.cli` talks to this API; this API talks to Keycloak (for identity), to NATS (to ask `alcatraz.worker` to spawn or destroy a Firecracker VM), and signs short-lived OpenSSH user certificates that `alcatraz.gateway` and the in-VM `sshd` accept.
+`alcatraz.cli` talks to this API; this API talks to Keycloak (for identity) and to NATS (to ask `alcatraz.worker` to spawn or destroy a Firecracker VM, and to consume `vm.ready` so the sandbox can transition to `Running`). It signs short-lived OpenSSH user certificates that the in-VM `sshd` accepts; the public TLS path is fronted by Traefik (configured by `alcatraz.routes`).
 
 ```
 alcatraz.cli ──┬─→ POST /auth/device                  ──→ alcatraz.api ──→ Keycloak (device flow proxy)
                ├─→ POST /sandboxes                    ──→ alcatraz.api ──→ NATS vm.spawn ──→ alcatraz.worker ──→ Firecracker VM (alcatraz.core)
-               ├─→ POST /sandboxes/{id}/ssh-cert      ──→ alcatraz.api  (SSH CA signs cert)
-               └─→ ssh -i cert al@gateway             ──→ alcatraz.gateway (TLS) ──→ sshd in VM
-                                                                                    (TrustedUserCAKeys = api's CA pubkey)
+               ├─→ GET  /sandboxes/{id}               ──→ alcatraz.api  (CLI polls until Status == Running)
+               │                                                  ▲
+               │                                          NATS    │
+               │                                          vm.ready│
+               │                                                  │ alcatraz.worker
+               ├─→ POST /sandboxes/{id}/ssh-cert      ──→ alcatraz.api  (SSH CA signs cert; cert response carries Traefik or per-sandbox endpoint)
+               └─→ ssh -o ProxyCommand=openssl s_client …                ──→ Traefik (TLS, SNI) ──→ sshd in VM
+                                                                                                   (TrustedUserCAKeys = api's CA pubkey)
 ```
 
-This API never holds a customer's SSH private key, never sees raw Keycloak credentials from the CLI, and never spawns VMs itself — those are the gateway's, the IdP's, and the worker's jobs respectively.
+This API never holds a customer's SSH private key, never sees raw Keycloak credentials from the CLI, and never spawns VMs itself — those are the IdP's and the worker's jobs respectively.
 
 ---
 
 ## What this component owns
 
-- The `Sandbox` aggregate and its lifecycle (`Provisioning → Running → Deleting → Deleted/Failed`).
+- The `Sandbox` aggregate and its lifecycle (`Provisioning → Running → Deleting → Deleted/Failed`). Cert issuance requires `Running`, which is set by the `VmReadyConsumer` hosted service when the worker publishes `vm.ready`.
 - The OAuth 2.0 device-authorization-grant proxy, so the CLI never sees realm, client_id, or client_secret.
-- The SSH certificate authority — 24h user certs, principal = sandbox UUID, signed by shelling out to `ssh-keygen -s`.
+- The SSH certificate authority — 24h user certs, principal = sandbox UUID, signed by shelling out to `ssh-keygen -s`. Cert responses carry the routable endpoint: `Gateway:Host/Port` if configured (production via Traefik), otherwise the per-sandbox host/port the worker reported.
 - User registration and the role/permission model (Keycloak owns identity; the app DB owns authorization).
 - The transactional outbox that turns `SandboxRequested` / `SandboxDeletionRequested` domain events into NATS publishes.
 
 ## What this component does NOT own
 
-- VM scheduling, networking, AgentFS — that's [`alcatraz.worker`](../alcatraz.worker/README.md) (NATS subscriber) plus [`alcatraz.core`](../alcatraz.core/README.md) (kernel + rootfs + Firecracker scripts).
-- Customer→VM TLS ingress and SSH multiplexing — that's `alcatraz.gateway` (planned; reverse proxy in front of in-VM `sshd`).
+- VM scheduling, networking, AgentFS — that's [`alcatraz.worker`](../alcatraz.worker/README.md) (NATS subscriber/publisher) plus [`alcatraz.core`](../alcatraz.core/README.md) (kernel + rootfs + Firecracker scripts).
+- Customer→VM TLS ingress and SSH multiplexing — that's Traefik (off-the-shelf) fed by [`alcatraz.routes`](../alcatraz.routes/README.md), a small NATS→file-config publisher. The API never directly talks to Traefik or to the worker.
 - Identity storage — Keycloak does. This API stores only the local `users` row keyed by Keycloak's `sub`.
 
 ---
@@ -75,7 +80,7 @@ For the design rationale and the full request lifecycle, see [`docs/customer-cli
 | Data | PostgreSQL via EF Core, Dapper for read-heavy queries |
 | Cache | Redis (StackExchange.Redis) |
 | Identity | Keycloak (JWT Bearer + OAuth 2.0 device flow) |
-| Messaging | NATS.Net (publishes `vm.spawn`, `vm.destroy`) |
+| Messaging | NATS.Net (publishes `vm.spawn`, `vm.destroy`; consumes `vm.ready` via a `BackgroundService`) |
 | CQRS / mediator | MediatR |
 | Validation | FluentValidation |
 | Background jobs | Quartz.NET (outbox drain) |
@@ -95,7 +100,7 @@ docker compose up -d --build
 docker compose logs -f forqstudio.api  # wait for "Now listening on: http://[::]:8080"
 ```
 
-This brings up the API plus Keycloak, Postgres, Redis, NATS, Seq, an Alpine `sshd` stand-in for a Firecracker VM, and a one-shot container that generates the SSH CA into a shared volume. `alcatraz.worker` runs on the host (out of compose) and connects to NATS at `localhost:4222`; `alcatraz.cli` is built locally with `dotnet`.
+This brings up the API plus Keycloak, Postgres, Redis, NATS, Seq, and a one-shot container that generates the SSH CA into a shared volume. `alcatraz.worker` runs on the host (out of compose) and connects to NATS at `localhost:4222`; `alcatraz.cli` is built locally with `dotnet`. Two optional profiles: `--profile gateway` (Traefik + `alcatraz.routes` for public TLS ingress) and `--profile demo-sshd` (legacy Alpine sshd stand-in for cert-pipeline testing without a worker).
 
 For the full register → device login → create sandbox → fetch cert → SSH walkthrough, see [`docs/local-end-to-end.md`](docs/local-end-to-end.md).
 
@@ -108,7 +113,7 @@ src/
 ├── ForqStudio.Domain/             # aggregates (Sandbox, User), domain events, errors, repository interfaces
 ├── ForqStudio.Application/        # use cases — commands, queries, validators, handlers
 │   ├── Auth/                      # InitiateDeviceAuth, ExchangeDeviceToken
-│   ├── Sandboxes/                 # CreateSandbox, DeleteSandbox, GetSandbox, ListSandboxes, IssueSshCertificate
+│   ├── Sandboxes/                 # CreateSandbox, DeleteSandbox, GetSandbox, ListSandboxes, IssueSshCertificate, MarkSandboxRunning
 │   └── Users/                     # Register, Login, GetLoggedInUser
 ├── ForqStudio.Infrastructure/     # EF Core, Keycloak clients, NATS publisher, ssh-keygen CA, Quartz outbox
 └── ForqStudio.Api/                # controllers, middleware, DI composition, appsettings

@@ -11,11 +11,14 @@ The customer-facing CLI for [Alcatraz](../README.md). Built on .NET 8 + Spectre.
 ```
 alcatraz.cli ──HTTP──► alcatraz.api ──proxy──► Keycloak (device flow)
              ──HTTP──► alcatraz.api ──NATS──► alcatraz.worker ──► Firecracker VM
-             ──ssh ──► alcatraz.gateway (planned) ──► sshd in VM
-                                                      (TrustedUserCAKeys = api's CA pubkey)
+             ──HTTP──► alcatraz.api  (poll until Status == Running, then issue cert)
+             ──ssh + ProxyCommand=openssl s_client … -servername <id> ──► Traefik ──► sshd in VM
+                                                                                       (TrustedUserCAKeys = api's CA pubkey)
 ```
 
 The CLI never talks to Keycloak directly — it goes through `alcatraz.api`, which proxies the device-code grant and the refresh-token grant. That's the property that lets the CLI ship without baking in Keycloak's `client_secret`.
+
+`alcatraz ssh <id>` polls the API until the worker has reported the sandbox as `Running` (then the cert response carries the right endpoint). For local dev (no Traefik) it dials the per-sandbox VM IP directly; for production it sets the SNI on `openssl s_client` to the sandbox UUID so Traefik can route by it.
 
 For the system-level design of how SSH access works, see [`../plans/customer-vm-access-ssh-ca.md`](../plans/customer-vm-access-ssh-ca.md).
 
@@ -63,12 +66,13 @@ Configuration layering (lowest → highest precedence): defaults → `config.jso
 
 ## Local development
 
-The control plane and supporting services are brought up by the repo-root [`docker-compose.yml`](../docker-compose.yml). The worker runs separately on the host. The CLI is built locally.
+The control plane and supporting services are brought up by the repo-root [`docker-compose.yml`](../docker-compose.yml). The worker runs separately on the host (it needs KVM and CNI). The CLI is built locally.
 
 ```bash
-# 1. From the repo root
+# 1. Bring up the stack and start the worker — see ../README.md for full setup
 cd ..
 docker compose up -d
+sudo -E ./alcatraz.worker/bin/alcatraz-worker        # in another terminal
 
 # 2. Build the CLI
 dotnet build alcatraz.cli/Alcatraz.Cli.sln
@@ -81,13 +85,13 @@ curl -sX POST http://localhost:8080/api/v1/users/register \
 # 4. Sign in
 dotnet run --project alcatraz.cli/src/Alcatraz.Cli -- login
 
-# 5. Create + connect
+# 5. Create + connect. The CLI polls until the worker reports Running,
+#    issues a cert, and execs ssh.
 ID=$(dotnet run --project alcatraz.cli/src/Alcatraz.Cli -- sandbox create --vcpus 2 --memory 2048 --json | jq -r .id)
-docker exec ForqStudio.DemoSshd sh -c "echo $ID > /etc/ssh/auth_principals/al"  # stand-in for the worker
 dotnet run --project alcatraz.cli/src/Alcatraz.Cli -- ssh "$ID"
 ```
 
-A more thorough walkthrough lives at [`docs/local-end-to-end.md`](docs/local-end-to-end.md).
+A `curl`-only walkthrough (useful for smoke-testing the API in isolation) lives at [`../alcatraz.api/docs/local-end-to-end.md`](../alcatraz.api/docs/local-end-to-end.md).
 
 ---
 

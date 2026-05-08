@@ -10,10 +10,10 @@ services:
       - ASPNETCORE_HTTP_PORTS=8080
       - Ssh__CA__PrivateKeyPath=/run/alcatraz-ca/alcatraz_ca
       - Nats__Url=nats://forqstudio-nats:4222
-      # Point the cert response at the demo sshd so `alcatraz ssh` works out of the box.
-      # In production, override these to the real ssh.alcatraz.io gateway.
-      - Gateway__Host=localhost
-      - Gateway__Port=2222
+      # When unset, the cert response carries the per-sandbox endpoint reported
+      # by the worker (direct VM IP, local dev). To route through Traefik, set:
+      #   Gateway__Host=ssh.alcatraz.io
+      #   Gateway__Port=443
     ports:
       - "8080:8080"
     volumes:
@@ -103,13 +103,13 @@ services:
     volumes:
       - alcatraz_ca:/run/alcatraz-ca
 
-  # Stand-in for an Alcatraz Firecracker VM. Mirrors the rootfs convention:
-  # user `al` with passwordless sudo, sshd accepting CA-signed user certs whose
-  # principal matches whatever is in /etc/ssh/auth_principals/al. The operator
-  # writes the sandbox UUID into that file with `docker exec` between sandbox
-  # creates (in production, the worker writes it into the AgentFS overlay).
+  # Legacy stand-in for an Alcatraz Firecracker VM. The default flow now points
+  # the CLI directly at the worker-reported VM IP, so this is gated behind a
+  # profile and won't start with `docker compose up`. Bring it up with
+  # `--profile demo-sshd` if you want to test the cert pipeline without a worker.
   forqstudio-demo-sshd:
     container_name: ForqStudio.DemoSshd
+    profiles: ["demo-sshd"]
     build:
       context: ./alcatraz.api/.files/demo-sshd
       dockerfile: Dockerfile
@@ -121,6 +121,45 @@ services:
       forqstudio-ca-init:
         condition: service_completed_successfully
 
+  # Public TLS ingress for SSH-over-TLS. SNI = sandbox UUID; per-sandbox routes
+  # are written by `forqstudio-routes` into the traefik_dynamic volume.
+  # network_mode: host so Traefik can dial 172.16.0.0/24 (the worker's bridge
+  # subnet). Bring up with `--profile gateway` on a public host with DNS for
+  # GATEWAY_AUTOCERT_HOST pointed at it.
+  forqstudio-traefik:
+    image: traefik:3.1
+    container_name: ForqStudio.Traefik
+    profiles: ["gateway"]
+    network_mode: host
+    volumes:
+      - ./alcatraz.routes/etc/traefik.yml:/etc/traefik/traefik.yml:ro
+      - traefik_dynamic:/etc/traefik/dynamic
+      - traefik_acme:/var/lib/traefik/acme
+    restart: unless-stopped
+
+  # Subscribes to NATS vm.ready / vm.destroyed (no queue group, fanout) and
+  # writes Traefik's dynamic file provider config. Hot-reload picks up changes.
+  forqstudio-routes:
+    image: ${DOCKER_REGISTRY-}alcatrazroutes
+    container_name: ForqStudio.Routes
+    profiles: ["gateway"]
+    build:
+      context: ./alcatraz.routes
+    environment:
+      - NATS_URL=nats://forqstudio-nats:4222
+      - NATS_READY_SUBJECT=vm.ready
+      - NATS_DESTROYED_SUBJECT=vm.destroyed
+      - OUTPUT_PATH=/output/sandboxes.yml
+      - GATEWAY_DOMAIN=${GATEWAY_AUTOCERT_HOST:-ssh.alcatraz.io}
+    volumes:
+      - traefik_dynamic:/output
+    depends_on:
+      forqstudio-nats:
+        condition: service_started
+    restart: unless-stopped
+
 volumes:
   keycloak_data:
   alcatraz_ca:
+  traefik_dynamic:
+  traefik_acme:

@@ -237,15 +237,30 @@ VM_GID="$(awk -F: -v user="${VM_USER}" '$1 == user { print $4 }' "${ROOTFS_DIR}/
 
 log "Configuring SSH access"
 chroot_run "install -d -m 0755 /etc/ssh/sshd_config.d"
+# Cert auth is the customer-facing path:
+#   - sshd validates user certs signed by alcatraz.api's CA (TrustedUserCAKeys)
+#   - a cert principal must appear in AuthorizedPrincipalsFile to be accepted
+# The worker writes both files into the AgentFS overlay at spawn:
+#   /etc/ssh/trusted_user_ca_keys  ← API's CA pubkey (gates which signers we trust)
+#   /etc/ssh/auth_principals/al    ← sandbox UUID (gates which cert is for THIS VM)
+# Empty stubs are pre-created at build so sshd starts cleanly even on a bare
+# rootfs boot; the worker's overlay write replaces them per-VM.
 sudo tee "${ROOTFS_DIR}/etc/ssh/sshd_config.d/alcatraz.conf" >/dev/null <<EOF
-PasswordAuthentication yes
+PasswordAuthentication no
 PubkeyAuthentication yes
 KbdInteractiveAuthentication no
 PermitRootLogin no
 UsePAM no
 X11Forwarding no
 PrintMotd no
+TrustedUserCAKeys /etc/ssh/trusted_user_ca_keys
+AuthorizedPrincipalsFile /etc/ssh/auth_principals/%u
 EOF
+sudo install -d -m 0755 "${ROOTFS_DIR}/etc/ssh/auth_principals"
+sudo touch "${ROOTFS_DIR}/etc/ssh/auth_principals/${VM_USER}"
+sudo chmod 0644 "${ROOTFS_DIR}/etc/ssh/auth_principals/${VM_USER}"
+sudo touch "${ROOTFS_DIR}/etc/ssh/trusted_user_ca_keys"
+sudo chmod 0644 "${ROOTFS_DIR}/etc/ssh/trusted_user_ca_keys"
 chroot_run "ssh-keygen -A"
 sudo mkdir -p "${ROOTFS_DIR}/home/${VM_USER}/.ssh"
 if compgen -G "${HOST_SSH_DIR}/*.pub" >/dev/null 2>&1; then

@@ -52,14 +52,14 @@ Guest-side:
 - Ubuntu userspace
 - developer tools
 - `/workspace`
-- `sshd`
+- `sshd` configured for cert-based auth: `TrustedUserCAKeys /etc/ssh/trusted_user_ca_keys` + `AuthorizedPrincipalsFile /etc/ssh/auth_principals/%u`. Both files exist as empty stubs in the base rootfs; `alcatraz.worker` plants the per-sandbox values into the AgentFS overlay before VM boot. Password auth is disabled.
 - outbound access to GitHub, npm, and Ubuntu mirrors through host NAT
 
 ## Guest Defaults
 
 - hostname: `alcatraz`
 - user: `al`
-- password: `dev` by default, configurable with `VM_USER_PASSWORD`
+- password: `dev` by default, configurable with `VM_USER_PASSWORD` (only used by `chpasswd` at build; `sshd` rejects password auth — keep this around for serial-console fallback)
 - sudo: passwordless
 - working directory after login: `/workspace`
 - default VM size: `4` vCPU, `8192` MiB RAM

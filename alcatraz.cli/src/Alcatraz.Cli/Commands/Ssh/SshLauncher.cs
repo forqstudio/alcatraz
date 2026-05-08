@@ -9,6 +9,7 @@ public sealed record SshInvocation(
     string GatewayHost,
     int GatewayPort,
     bool UseProxy,
+    Guid SandboxId,
     string? RemoteCommand);
 
 public interface ISshLauncher
@@ -32,8 +33,15 @@ internal sealed class SshLauncher : ISshLauncher
 
         if (inv.UseProxy)
         {
+            // SNI = sandbox UUID is what the gateway (Traefik) routes on. The
+            // TLS cert presented to the client is for the gateway hostname, not
+            // the SNI value, but openssl s_client doesn't verify SAN against
+            // SNI by default — and even if it did, the SSH cert layer is the
+            // real auth boundary, not TLS hostname.
             args.Add("-o");
-            args.Add($"ProxyCommand=openssl s_client -quiet -connect {inv.GatewayHost}:{inv.GatewayPort}");
+            args.Add(
+                $"ProxyCommand=openssl s_client -quiet -connect {inv.GatewayHost}:{inv.GatewayPort} " +
+                $"-servername {inv.SandboxId}");
         }
 
         args.Add("-p");

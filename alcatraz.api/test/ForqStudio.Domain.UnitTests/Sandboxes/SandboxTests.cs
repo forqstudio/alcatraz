@@ -81,12 +81,49 @@ public class SandboxTests : BaseTest
     }
 
     [Fact]
-    public void CanIssueCertificate_OnlyTrue_ForProvisioningOrRunning()
+    public void CanIssueCertificate_OnlyTrue_ForRunning()
     {
         var sandbox = Sandbox.Request(OwnerUserId, 2, 2048, UtcNow);
+        // Provisioning: cert issuance now requires the worker to have reported the
+        // sandbox endpoint via vm.ready, which advances the state to Running.
+        sandbox.CanIssueCertificate().Should().BeFalse();
+
+        sandbox.MarkRunning("172.16.0.10", 22, UtcNow);
         sandbox.CanIssueCertificate().Should().BeTrue();
 
         sandbox.MarkDeleting(UtcNow);
         sandbox.CanIssueCertificate().Should().BeFalse();
+    }
+
+    [Fact]
+    public void MarkRunning_FromProvisioning_TransitionsToRunning_StoresEndpoint_AndRaisesEvent()
+    {
+        var sandbox = Sandbox.Request(OwnerUserId, 2, 2048, UtcNow);
+        sandbox.ClearDomainEvents();
+
+        var result = sandbox.MarkRunning("172.16.0.10", 22, UtcNow.AddSeconds(5));
+
+        result.IsSuccess.Should().BeTrue();
+        sandbox.Status.Should().Be(SandboxStatus.Running);
+        sandbox.Host.Should().Be("172.16.0.10");
+        sandbox.Port.Should().Be(22);
+
+        AssertDomainEventWasPublished<SandboxBecameRunningDomainEvent>(sandbox)
+            .SandboxId.Should().Be(sandbox.Id);
+    }
+
+    [Fact]
+    public void MarkRunning_WhenNotProvisioning_ReturnsNotProvisioningError()
+    {
+        var sandbox = Sandbox.Request(OwnerUserId, 2, 2048, UtcNow);
+        sandbox.MarkRunning("172.16.0.10", 22, UtcNow);
+        sandbox.ClearDomainEvents();
+
+        var result = sandbox.MarkRunning("172.16.0.11", 22, UtcNow.AddSeconds(1));
+
+        result.IsFailure.Should().BeTrue();
+        result.Error.Should().Be(SandboxErrors.NotProvisioning);
+        sandbox.Host.Should().Be("172.16.0.10");
+        sandbox.DomainEvents().Should().BeEmpty();
     }
 }

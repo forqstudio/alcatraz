@@ -17,28 +17,35 @@ public class IssueSshCertificateCommandHandlerTests
     private static readonly Guid OwnerUserId = Guid.NewGuid();
     private const string IdentityId = "keycloak-sub-123";
     private const string Pubkey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIH9vYJ user@host";
+    private const string VmHost = "172.16.0.10";
+    private const int VmPort = 22;
 
     private readonly ISandboxRepository _sandboxRepository = Substitute.For<ISandboxRepository>();
     private readonly ISshCertificateAuthority _ca = Substitute.For<ISshCertificateAuthority>();
     private readonly IUserContext _userContext = Substitute.For<IUserContext>();
-    private readonly IssueSshCertificateCommandHandler _handler;
+    private readonly IDateTimeProvider _clock = Substitute.For<IDateTimeProvider>();
 
     public IssueSshCertificateCommandHandlerTests()
     {
-        var clock = Substitute.For<IDateTimeProvider>();
-        clock.UtcNow.Returns(UtcNow);
+        _clock.UtcNow.Returns(UtcNow);
         _userContext.UserId.Returns(OwnerUserId);
         _userContext.IdentityId.Returns(IdentityId);
+    }
 
-        var gateway = Options.Create(new GatewayOptions { Host = "ssh.alcatraz.io", Port = 443 });
-
-        _handler = new IssueSshCertificateCommandHandler(
+    private IssueSshCertificateCommandHandler BuildHandler(GatewayOptions? gateway = null) =>
+        new(
             _sandboxRepository,
             _ca,
             _userContext,
-            clock,
-            gateway,
+            _clock,
+            Options.Create(gateway ?? new GatewayOptions()),
             NullLogger<IssueSshCertificateCommandHandler>.Instance);
+
+    private static Sandbox RunningSandbox(Guid ownerUserId, string host = VmHost, int port = VmPort)
+    {
+        var sandbox = Sandbox.Request(ownerUserId, 2, 2048, UtcNow);
+        sandbox.MarkRunning(host, port, UtcNow);
+        return sandbox;
     }
 
     [Fact]
@@ -47,7 +54,7 @@ public class IssueSshCertificateCommandHandlerTests
         var sandboxId = Guid.NewGuid();
         _sandboxRepository.GetByIdAsync(sandboxId, Arg.Any<CancellationToken>()).Returns((Sandbox?)null);
 
-        var result = await _handler.Handle(new IssueSshCertificateCommand(sandboxId, Pubkey), CancellationToken.None);
+        var result = await BuildHandler().Handle(new IssueSshCertificateCommand(sandboxId, Pubkey), CancellationToken.None);
 
         result.Error.Should().Be(SandboxErrors.NotFound);
     }
@@ -55,30 +62,42 @@ public class IssueSshCertificateCommandHandlerTests
     [Fact]
     public async Task Handle_WhenOwnedByOtherUser_ReturnsNotFound()
     {
-        var sandbox = Sandbox.Request(Guid.NewGuid(), 2, 2048, UtcNow);
+        var sandbox = RunningSandbox(Guid.NewGuid());
         _sandboxRepository.GetByIdAsync(sandbox.Id, Arg.Any<CancellationToken>()).Returns(sandbox);
 
-        var result = await _handler.Handle(new IssueSshCertificateCommand(sandbox.Id, Pubkey), CancellationToken.None);
+        var result = await BuildHandler().Handle(new IssueSshCertificateCommand(sandbox.Id, Pubkey), CancellationToken.None);
 
         result.Error.Should().Be(SandboxErrors.NotFound);
     }
 
     [Fact]
-    public async Task Handle_WhenSandboxDeleting_ReturnsInvalidState()
+    public async Task Handle_WhenSandboxStillProvisioning_ReturnsInvalidState()
     {
+        // Cert issuance now requires Running — a worker must have published vm.ready first.
         var sandbox = Sandbox.Request(OwnerUserId, 2, 2048, UtcNow);
-        sandbox.MarkDeleting(UtcNow);
         _sandboxRepository.GetByIdAsync(sandbox.Id, Arg.Any<CancellationToken>()).Returns(sandbox);
 
-        var result = await _handler.Handle(new IssueSshCertificateCommand(sandbox.Id, Pubkey), CancellationToken.None);
+        var result = await BuildHandler().Handle(new IssueSshCertificateCommand(sandbox.Id, Pubkey), CancellationToken.None);
 
         result.Error.Should().Be(SandboxErrors.InvalidStateForCertIssue);
     }
 
     [Fact]
-    public async Task Handle_OnSuccess_CallsCAWithCorrectPrincipalAndKeyId()
+    public async Task Handle_WhenSandboxDeleting_ReturnsInvalidState()
     {
-        var sandbox = Sandbox.Request(OwnerUserId, 2, 2048, UtcNow);
+        var sandbox = RunningSandbox(OwnerUserId);
+        sandbox.MarkDeleting(UtcNow);
+        _sandboxRepository.GetByIdAsync(sandbox.Id, Arg.Any<CancellationToken>()).Returns(sandbox);
+
+        var result = await BuildHandler().Handle(new IssueSshCertificateCommand(sandbox.Id, Pubkey), CancellationToken.None);
+
+        result.Error.Should().Be(SandboxErrors.InvalidStateForCertIssue);
+    }
+
+    [Fact]
+    public async Task Handle_GatewayConfigured_ReturnsGatewayEndpoint()
+    {
+        var sandbox = RunningSandbox(OwnerUserId);
         _sandboxRepository.GetByIdAsync(sandbox.Id, Arg.Any<CancellationToken>()).Returns(sandbox);
 
         var validUntil = UtcNow.AddHours(24);
@@ -91,7 +110,9 @@ public class IssueSshCertificateCommandHandlerTests
                 Arg.Any<CancellationToken>())
             .Returns(Result.Success(new IssuedSshCertificate("cert-blob", UtcNow, validUntil)));
 
-        var result = await _handler.Handle(new IssueSshCertificateCommand(sandbox.Id, Pubkey), CancellationToken.None);
+        var handler = BuildHandler(new GatewayOptions { Host = "ssh.alcatraz.io", Port = 443 });
+
+        var result = await handler.Handle(new IssueSshCertificateCommand(sandbox.Id, Pubkey), CancellationToken.None);
 
         result.IsSuccess.Should().BeTrue();
         result.Value.Cert.Should().Be("cert-blob");
@@ -109,9 +130,33 @@ public class IssueSshCertificateCommandHandlerTests
     }
 
     [Fact]
+    public async Task Handle_GatewayNotConfigured_ReturnsPerSandboxEndpoint()
+    {
+        var sandbox = RunningSandbox(OwnerUserId);
+        _sandboxRepository.GetByIdAsync(sandbox.Id, Arg.Any<CancellationToken>()).Returns(sandbox);
+
+        var validUntil = UtcNow.AddHours(24);
+        _ca.IssueAsync(
+                Pubkey,
+                sandbox.Id.ToString(),
+                Arg.Any<TimeSpan>(),
+                Arg.Any<string>(),
+                UtcNow,
+                Arg.Any<CancellationToken>())
+            .Returns(Result.Success(new IssuedSshCertificate("cert-blob", UtcNow, validUntil)));
+
+        // No gateway configured -> handler returns the worker-reported endpoint.
+        var result = await BuildHandler().Handle(new IssueSshCertificateCommand(sandbox.Id, Pubkey), CancellationToken.None);
+
+        result.IsSuccess.Should().BeTrue();
+        result.Value.GatewayHost.Should().Be(VmHost);
+        result.Value.GatewayPort.Should().Be(VmPort);
+    }
+
+    [Fact]
     public async Task Handle_WhenCAFails_PropagatesError()
     {
-        var sandbox = Sandbox.Request(OwnerUserId, 2, 2048, UtcNow);
+        var sandbox = RunningSandbox(OwnerUserId);
         _sandboxRepository.GetByIdAsync(sandbox.Id, Arg.Any<CancellationToken>()).Returns(sandbox);
 
         _ca.IssueAsync(
@@ -123,7 +168,7 @@ public class IssueSshCertificateCommandHandlerTests
                 Arg.Any<CancellationToken>())
             .Returns(Result.Failure<IssuedSshCertificate>(SshCertificateErrors.SigningFailed));
 
-        var result = await _handler.Handle(new IssueSshCertificateCommand(sandbox.Id, Pubkey), CancellationToken.None);
+        var result = await BuildHandler().Handle(new IssueSshCertificateCommand(sandbox.Id, Pubkey), CancellationToken.None);
 
         result.Error.Should().Be(SshCertificateErrors.SigningFailed);
     }

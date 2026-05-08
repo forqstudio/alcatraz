@@ -12,15 +12,19 @@ import (
 const EnvFile = ".env"
 
 const (
-	DefaultURL        = "nats://localhost:4222"
-	DefaultSubject    = "vm.spawn"
-	DefaultQueueGroup = "vm-workers"
+	DefaultURL              = "nats://localhost:4222"
+	DefaultSubject          = "vm.spawn"
+	DefaultQueueGroup       = "vm-workers"
+	DefaultReadySubject     = "vm.ready"
+	DefaultDestroyedSubject = "vm.destroyed"
 )
 
 type Config struct {
-	URL        string
-	Subject    string
-	QueueGroup string
+	URL              string
+	Subject          string
+	QueueGroup       string
+	ReadySubject     string
+	DestroyedSubject string
 }
 
 // LoadConfig returns the messaging config. It starts from DefaultConfig() and
@@ -41,13 +45,21 @@ func LoadConfig() (*Config, error) {
 	if v := os.Getenv("NATS_QUEUE_GROUP"); v != "" {
 		cfg.QueueGroup = v
 	}
+	if v := os.Getenv("NATS_READY_SUBJECT"); v != "" {
+		cfg.ReadySubject = v
+	}
+	if v := os.Getenv("NATS_DESTROYED_SUBJECT"); v != "" {
+		cfg.DestroyedSubject = v
+	}
 	return cfg, nil
 }
 
 func DefaultConfig() *Config {
 	return &Config{
-		URL:        DefaultURL,
-		Subject:    DefaultSubject,
-		QueueGroup: DefaultQueueGroup,
+		URL:              DefaultURL,
+		Subject:          DefaultSubject,
+		QueueGroup:       DefaultQueueGroup,
+		ReadySubject:     DefaultReadySubject,
+		DestroyedSubject: DefaultDestroyedSubject,
 	}
 }

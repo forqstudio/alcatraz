@@ -55,3 +55,14 @@ public sealed class ApiUnavailableException : AlcatrazCliException
     public ApiUnavailableException(string detail, Exception inner)
         : base($"The alcatraz API is unavailable: {detail}", inner) { }
 }
+
+public sealed class SandboxNotReadyException : AlcatrazCliException
+{
+    public Guid SandboxId { get; }
+
+    public SandboxNotReadyException(Guid sandboxId, string detail)
+        : base($"Sandbox {sandboxId} is not ready: {detail}")
+    {
+        SandboxId = sandboxId;
+    }
+}

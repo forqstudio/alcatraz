@@ -1,0 +1,28 @@
+global:
+  checkNewVersion: false
+  sendAnonymousUsage: false
+
+entryPoints:
+  wss:
+    address: ":443"
+
+providers:
+  file:
+    directory: /etc/traefik/dynamic
+    watch: true
+
+certificatesResolvers:
+  letsencrypt:
+    acme:
+      email: ops@alcatraz.io
+      storage: /var/lib/traefik/acme/acme.json
+      # TLS-ALPN-01 uses the same :443 listener; no port 80 needed.
+      tlsChallenge: {}
+
+api:
+  insecure: false
+
+log:
+  level: INFO
+
+accessLog: {}

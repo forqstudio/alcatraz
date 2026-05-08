@@ -44,6 +44,12 @@ internal sealed class IssueSshCertificateCommandHandler(
             return Result.Failure<SshCertificateResponse>(SandboxErrors.InvalidStateForCertIssue);
         }
 
+        var endpoint = ResolveEndpoint(sandbox);
+        if (endpoint is null)
+        {
+            return Result.Failure<SshCertificateResponse>(SandboxErrors.NotReady);
+        }
+
         var utcNow = dateTimeProvider.UtcNow;
         var unixSeconds = new DateTimeOffset(utcNow, TimeSpan.Zero).ToUnixTimeSeconds();
         var keyId = $"{userContext.IdentityId}:{sandbox.Id}:{unixSeconds}";
@@ -71,7 +77,26 @@ internal sealed class IssueSshCertificateCommandHandler(
         return new SshCertificateResponse(
             issued.Value.CertOpenSsh,
             issued.Value.ValidUntilUtc,
-            gatewayOptions.Host,
-            gatewayOptions.Port);
+            endpoint.Value.Host,
+            endpoint.Value.Port);
+    }
+
+    // Production deployments configure Gateway:Host/Port pointing at the public Traefik
+    // ingress; the cert response then routes the customer through it. Local dev compose
+    // leaves Gateway empty and the per-sandbox endpoint reported by the worker is used,
+    // which the CLI dials directly on the bridge subnet.
+    private (string Host, int Port)? ResolveEndpoint(Sandbox sandbox)
+    {
+        if (!string.IsNullOrWhiteSpace(gatewayOptions.Host) && gatewayOptions.Port > 0)
+        {
+            return (gatewayOptions.Host, gatewayOptions.Port);
+        }
+
+        if (!string.IsNullOrWhiteSpace(sandbox.Host) && sandbox.Port is > 0)
+        {
+            return (sandbox.Host, sandbox.Port.Value);
+        }
+
+        return null;
     }
 }

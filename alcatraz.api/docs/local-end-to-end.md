@@ -1,56 +1,72 @@
 # Local End-to-End Demo
 
-This walks through the entire customer flow against a local `docker compose` stack — **device-flow login → create sandbox → fetch SSH cert → SSH into the sandbox** — without writing the CLI app and without `alcatraz.gateway` or `alcatraz.worker` being involved.
+This walks through the entire customer flow against a local `docker compose` stack — **device-flow login → create sandbox → worker boots VM → fetch SSH cert → SSH into the sandbox** — using `curl` and stock `ssh` so each step is verifiable without CLI code. The CLI does the same thing with friendlier UX; see [`../../alcatraz.cli/README.md`](../../alcatraz.cli/README.md).
 
-A `forqstudio-demo-sshd` Alpine container stands in for a real Firecracker VM. It mirrors the rootfs from `alcatraz.core/build-rootfs.sh`: user `al` with passwordless sudo, sshd configured with `TrustedUserCAKeys` and `AuthorizedPrincipalsFile`. SSH-ing into it with the cert that `alcatraz.api` issued is the proof that the cert pipeline works end-to-end.
+For an even simpler smoke test that doesn't need a worker, the `--profile demo-sshd` Alpine container still exists. See "Cert pipeline only (no worker)" at the bottom.
 
 ## Prerequisites
 
 - Docker Compose
 - `curl`, `jq`, `ssh-keygen`, `ssh` on the host
 - A web browser (one click during device-flow login)
+- KVM, CNI plugins, and a built kernel + rootfs in `alcatraz.core/` for the worker — see [`../../alcatraz.worker/README.md`](../../alcatraz.worker/README.md)
 
-## What `docker compose up` brings up now
+## What `docker compose up` brings up
 
 | Service | Purpose |
 |---|---|
-| `forqstudio.api` | Our API on `:8080` (ssh-keygen now installed in the image; CA volume mounted at `/run/alcatraz-ca`) |
+| `forqstudio.api` | Our API on `:8080`. Subscribes to `vm.ready` and transitions sandboxes to `Running` |
 | `forqstudio-db` | Postgres on `:5432` |
 | `forqstudio-idp` | Keycloak on `:8082` (realm export pre-configured with device flow enabled) |
 | `forqstudio-redis` | Redis on `:6379` |
 | `forqstudio-nats` | NATS broker on `:4222` (monitoring on `:8222`) |
 | `forqstudio-seq` | Seq log viewer on `:8083` |
-| `forqstudio-ca-init` | Generates the shared CA key into the `alcatraz_ca` volume on first boot, then exits |
-| `forqstudio-demo-sshd` | Demo Alpine container running `sshd` on `:2222`, mounts the CA pubkey from the shared volume |
+| `forqstudio-ca-init` | Generates the shared CA key into the `alcatraz_ca` volume on first boot |
+
+Two extra profiles:
+
+- `--profile gateway` — Traefik (`network_mode: host`, ACME on `:443`) plus `alcatraz.routes`. For public-internet ingress.
+- `--profile demo-sshd` — legacy Alpine `sshd` stand-in for the cert-pipeline-only path described at the bottom.
 
 ## First-time bring-up
 
-The compose file lives at the repo root (`/docker-compose.yml`). Run all commands from there.
+The compose file lives at the repo root.
 
-If you've previously run `docker compose up`, you must wipe the Keycloak volume so the updated realm (with device flow enabled) is re-imported. Keycloak only imports on first boot:
+If you've previously run `docker compose up`, you must wipe volumes when the realm export changes (Keycloak only imports on first boot):
 
 ```bash
-cd /path/to/alcatraz   # repo root, NOT alcatraz.api/
+cd /path/to/alcatraz   # repo root
 docker compose down -v
 docker compose up -d --build
-```
-
-The first build takes a while (API is a multi-stage .NET image). Wait until logs settle:
-
-```bash
 docker compose logs -f forqstudio.api
 # Wait for "Now listening on: http://[::]:8080"
 ```
 
-Subsequent runs just need `docker compose up -d`. Re-run with `--build` whenever you edit `alcatraz.api/.files/ca-init/`, `alcatraz.api/.files/demo-sshd/`, or `alcatraz.api/src/ForqStudio.Api/Dockerfile`.
+## Bring up the worker
 
-For the architecture that sits behind these endpoints — domain model, NATS contract, CA, error mapping — see `customer-cli-and-sandboxes.md`.
+The worker is host-run (it needs KVM and CNI). One-time, copy the API's CA pubkey out of the shared compose volume so the worker can plant it into each VM's overlay:
+
+```bash
+sudo install -d -m 0755 /run/alcatraz-ca
+docker run --rm -v alcatraz_ca:/ca alpine cat /ca/alcatraz_ca.pub \
+  | sudo tee /run/alcatraz-ca/alcatraz_ca.pub > /dev/null
+```
+
+Then build and run:
+
+```bash
+cd alcatraz.worker
+make build
+sudo -E ./bin/alcatraz-worker
+```
+
+The worker subscribes to `vm.spawn` and starts publishing `vm.ready` once each VM's `sshd` is reachable.
 
 ## End-to-end walkthrough
 
 ### 1. Register a Keycloak user (one-time per stack)
 
-The realm ships empty of human users on purpose — registering through the API creates a Keycloak account *and* the matching local `users` row in one transaction. Without that, claims transformation can't resolve the local `UserId`.
+The realm ships empty of human users. Registering through the API creates a Keycloak account *and* the matching local `users` row in one transaction; without that, claims transformation can't resolve the local `UserId`.
 
 ```bash
 curl -sX POST http://localhost:8080/api/v1/users/register \
@@ -60,9 +76,7 @@ curl -sX POST http://localhost:8080/api/v1/users/register \
 
 ### 2. Get an access token
 
-You have two options.
-
-**Fast path (no browser, for verification scripts):** the existing `/users/login` endpoint runs the OAuth password grant against Keycloak.
+**Fast path** (password grant, no browser, useful for scripting):
 
 ```bash
 TOKEN=$(curl -sX POST http://localhost:8080/api/v1/users/login \
@@ -70,24 +84,20 @@ TOKEN=$(curl -sX POST http://localhost:8080/api/v1/users/login \
   -d '{"email":"demo@alcatraz.local","password":"demopass"}' | jq -r .accessToken)
 ```
 
-**Real device flow path (what the CLI will actually do):**
+**Real device-flow path** (what the CLI does):
 
 ```bash
 INIT=$(curl -sX POST http://localhost:8080/api/v1/auth/device)
-echo "$INIT" | jq .
 DEVICE_CODE=$(echo "$INIT" | jq -r .deviceCode)
-
-echo "Open this URL in a browser, sign in as demo@alcatraz.local / demopass:"
-echo "  $(echo "$INIT" | jq -r .verificationUriComplete)"
+echo "Open: $(echo "$INIT" | jq -r .verificationUriComplete)"
 read -p "Press Enter once you've signed in..."
 
 TOKEN=$(curl -sX POST http://localhost:8080/api/v1/auth/device/token \
   -H 'content-type: application/json' \
   -d "{\"deviceCode\":\"$DEVICE_CODE\"}" | jq -r .accessToken)
-echo "Got access token (truncated): ${TOKEN:0:40}..."
 ```
 
-While polling, `POST /auth/device/token` returns HTTP 400 with `"error": "authorization_pending"` until the browser flow completes — that's the RFC 8628 idiom the CLI implements. The compose stack sets `KC_HOSTNAME_URL=http://localhost:8082` so the verification URL is reachable from the host browser; without it, Keycloak emits the docker-internal hostname.
+While polling, `POST /auth/device/token` returns HTTP 400 with `"error": "authorization_pending"` until the browser sign-in completes — that's the RFC 8628 idiom the CLI implements.
 
 ### 3. Create a sandbox
 
@@ -95,40 +105,57 @@ While polling, `POST /auth/device/token` returns HTTP 400 with `"error": "author
 SANDBOX=$(curl -sX POST http://localhost:8080/api/v1/sandboxes \
   -H "authorization: bearer $TOKEN" -H 'content-type: application/json' \
   -d '{"vcpus":2,"memoryMib":2048}')
-echo "$SANDBOX" | jq .
 ID=$(echo "$SANDBOX" | jq -r .id)
+echo "Sandbox $ID requested"
 ```
 
-Watch the spawn fire on NATS in another shell:
+The API persists the row in `Provisioning`, writes a `SandboxRequested` outbox message in the same transaction, and the Quartz outbox drainer publishes `vm.spawn` on NATS.
+
+### 4. Wait for the worker
+
+The worker claims the `vm.spawn`, plants `auth_principals/al` and `trusted_user_ca_keys` into the AgentFS overlay, boots Firecracker, probes `vm_ip:22` until sshd accepts, and publishes `vm.ready`. The API's hosted `VmReadyConsumer` consumes that and marks the sandbox `Running`.
+
+You can watch the events on NATS in another shell:
 
 ```bash
 docker run --rm --network alcatraz_default natsio/nats-box:latest \
-  nats sub vm.spawn -s nats://forqstudio-nats:4222
+  nats sub 'vm.>' -s nats://forqstudio-nats:4222
 ```
 
-You should see the message arrive: `{"id":"<uuid>","vcpus":2,"memory_mib":2048,"customer_id":"<owner-uuid>"}`.
-
-### 4. Stand-in for the worker: write the principal file on the demo VM
-
-In production, the worker writes `/etc/ssh/auth_principals/al` (containing the sandbox UUID) into the AgentFS overlay before booting the VM. We do the same with `docker exec`:
+Or just poll the API:
 
 ```bash
-docker exec ForqStudio.DemoSshd sh -c "echo $ID > /etc/ssh/auth_principals/al"
+until [ "$(curl -s "http://localhost:8080/api/v1/sandboxes/$ID" \
+            -H "authorization: bearer $TOKEN" | jq -r .status)" = "2" ]; do
+  sleep 0.5
+done
+echo "Sandbox $ID is Running"
 ```
 
-### 5. Fetch an SSH cert for our workstation pubkey
+`status: 2` is `Running`. Once you see it, no other "stand-in" steps are needed — the worker has already done everything.
+
+### 5. Fetch an SSH cert
 
 ```bash
 ssh-keygen -t ed25519 -f /tmp/id_alcatraz -N "" -C "demo@workstation"
 PUB=$(cat /tmp/id_alcatraz.pub)
 
-curl -sX POST "http://localhost:8080/api/v1/sandboxes/$ID/ssh-cert" \
+RESP=$(curl -sX POST "http://localhost:8080/api/v1/sandboxes/$ID/ssh-cert" \
   -H "authorization: bearer $TOKEN" -H 'content-type: application/json' \
-  -d "{\"sshPublicKey\":\"$PUB\"}" | jq -r .cert > /tmp/id_alcatraz-cert.pub
+  -d "{\"sshPublicKey\":\"$PUB\"}")
+
+echo "$RESP" | jq -r .cert > /tmp/id_alcatraz-cert.pub
+GATEWAY_HOST=$(echo "$RESP" | jq -r .gatewayHost)
+GATEWAY_PORT=$(echo "$RESP" | jq -r .gatewayPort)
 
 ssh-keygen -L -f /tmp/id_alcatraz-cert.pub
-# Confirm: Type: user cert | Principal: <ID> | Valid: now → +24h | Signing CA: alcatraz-demo-ca
+# Type: user cert | Principal: <ID> | Valid: now → +24h | Signing CA: alcatraz-demo-ca
+echo "Connect target: $GATEWAY_HOST:$GATEWAY_PORT"
 ```
+
+In local dev (no `Gateway:Host` configured on the API), `gatewayHost`/`gatewayPort` is the worker-reported VM IP on the `172.16.0.0/24` bridge — directly reachable from the host because the worker runs in the host's network namespace.
+
+In a `--profile gateway` deployment with `Gateway:Host=ssh.alcatraz.io`, those fields point at Traefik instead.
 
 ### 6. SSH into the sandbox
 
@@ -136,26 +163,52 @@ ssh-keygen -L -f /tmp/id_alcatraz-cert.pub
 ssh -i /tmp/id_alcatraz \
     -i /tmp/id_alcatraz-cert.pub \
     -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
-    -p 2222 al@localhost
+    -p $GATEWAY_PORT "al@$GATEWAY_HOST"
 ```
 
-You should land in a shell as `al` on the demo container. `sudo whoami` returns `root` (passwordless sudo, mirrors the rootfs).
+You should land in a shell as `al`. Inside the VM, confirm the chain:
 
-This is the proof: stock `ssh` + stock `sshd` accept a cert minted by `alcatraz.api`'s CA endpoint, scoped to a specific sandbox, with no shared keys ever changing hands. The gateway, when it lands, will be a TLS-terminating proxy in front of the same `sshd`-side handshake — so this same cert will work there too.
+```bash
+cat /etc/ssh/auth_principals/al           # the sandbox UUID
+cat /etc/ssh/trusted_user_ca_keys         # the API's CA pubkey
+```
+
+That's the proof: stock `ssh` + stock `sshd` accepted a cert minted by the API's CA, scoped to a specific sandbox UUID, with no shared keys ever changing hands and the trust files planted by the worker (not baked into the rootfs).
 
 ## Negative cases worth trying
 
 | Scenario | Expected |
 |---|---|
-| SSH with the cert *after* deleting the sandbox | Fails: gateway in production would 404; here, the demo cert still works because we don't delete `auth_principals/al`. Run `docker exec ForqStudio.DemoSshd sh -c '> /etc/ssh/auth_principals/al'` to simulate the worker's cleanup. |
-| SSH with a cert whose principal differs from `auth_principals/al` | `sshd` rejects: `Certificate invalid: name is not a listed principal`. Try issuing a cert for one sandbox ID but writing a different one into the file. |
+| `POST /sandboxes/$ID/ssh-cert` while still `Provisioning` | API returns failure: `Sandbox.InvalidStateForCertIssue`. Cert issuance now requires `Running`. |
+| Worker not running when you create a sandbox | Stays in `Provisioning` forever; CLI's poll exhausts at 30s. Start the worker and the next attempt succeeds. |
+| SSH with the cert *after* deleting the sandbox | Worker tears down Firecracker; bridge IP no longer responds. Cert is still cryptographically valid until TTL — production gateway/firewall handles revocation by removing the route. |
+| SSH with a cert whose principal differs from `auth_principals/al` | `sshd` rejects: `Certificate invalid: name is not a listed principal`. |
 | SSH after the cert has expired (24h) | `sshd` rejects with `expired`. |
 | `POST /sandboxes/<id>/ssh-cert` for someone else's sandbox | API returns 404 (not 403) — owner-scoped lookup. |
+
+## Cert pipeline only (no worker)
+
+If you want to validate the cert pipeline in isolation — no KVM, no CNI, no Firecracker — bring up the legacy demo sshd stand-in:
+
+```bash
+docker compose --profile demo-sshd up -d
+```
+
+Because the API now hard-requires `Running` for cert issuance and there's no worker to publish `vm.ready`, you have to set the sandbox to `Running` directly in the database and write the principal file by hand. This is intentionally awkward — it's only useful for "did I break the cert handler?" sanity checks.
+
+```bash
+ID=...   # from /sandboxes
+docker exec ForqStudio.Db psql -U postgres -d forqstudio \
+  -c "UPDATE sandboxes SET status = 2, host = 'localhost', port = 2222 WHERE id = '$ID';"
+docker exec ForqStudio.DemoSshd sh -c "echo $ID > /etc/ssh/auth_principals/al"
+```
+
+Then steps 5–6 of the walkthrough work against `localhost:2222`. Prefer the proper worker path for everything else.
 
 ## Resetting the stack
 
 ```bash
-docker compose down -v   # drops keycloak_data and alcatraz_ca volumes
+docker compose down -v   # drops keycloak_data, alcatraz_ca, traefik_dynamic, traefik_acme volumes
 docker compose up -d --build
 ```
 
@@ -163,9 +216,9 @@ The CA key is regenerated, so any previously issued certs become useless — exa
 
 ## What this demo does *not* prove yet
 
-- Multiplexing many sandboxes onto one TLS endpoint (`alcatraz.gateway`).
-- Worker → API endpoint reporting (the sandbox stays in `Provisioning` forever).
+- Public TLS ingress under load — the `--profile gateway` path is functional but doesn't get exercised by this walkthrough; do that on a host with real DNS.
 - KRL-driven sub-TTL revocation.
-- L2 isolation between VMs on a shared bridge.
+- L2 isolation between VMs on a shared bridge (see [`../../alcatraz.worker/docs/network-isolation.md`](../../alcatraz.worker/docs/network-isolation.md)).
+- Multi-host workers behind a NAT — the bridge subnet `172.16.0.0/24` is single-host today; multi-host needs a shared underlay.
 
-Those are tracked in `docs/customer-cli-and-sandboxes.md` § "Where to continue" and in `plans/customer-vm-access-ssh-ca.md`.
+Those are tracked in [`../../plans/end-to-end-wrap-up.md`](../../plans/end-to-end-wrap-up.md) § "Out of scope" and in [`../../plans/customer-vm-access-ssh-ca.md`](../../plans/customer-vm-access-ssh-ca.md).

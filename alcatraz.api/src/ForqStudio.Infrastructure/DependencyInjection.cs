@@ -90,6 +90,8 @@ public static class DependencyInjection
         services.AddSingleton<ISandboxEventPublisher, NatsSandboxEventPublisher>();
 
         services.AddSingleton<ISshCertificateAuthority, SshKeygenCertificateAuthority>();
+
+        services.AddHostedService<VmReadyConsumer>();
     }
 
     private static void AddPersistence(IServiceCollection services, IConfiguration configuration)

@@ -35,6 +35,10 @@ public sealed class Sandbox : Entity
 
     public DateTime? DeletedOnUtc { get; private set; }
 
+    public string? Host { get; private set; }
+
+    public int? Port { get; private set; }
+
     public static Sandbox Request(Guid ownerUserId, int vcpus, int memoryMib, DateTime utcNow)
     {
         var sandbox = new Sandbox(
@@ -52,6 +56,22 @@ public sealed class Sandbox : Entity
             memoryMib));
 
         return sandbox;
+    }
+
+    public Result MarkRunning(string host, int port, DateTime utcNow)
+    {
+        if (Status != SandboxStatus.Provisioning)
+        {
+            return Result.Failure(SandboxErrors.NotProvisioning);
+        }
+
+        Status = SandboxStatus.Running;
+        Host = host;
+        Port = port;
+
+        RaiseDomainEvent(new SandboxBecameRunningDomainEvent(Id, host, port));
+
+        return Result.Success();
     }
 
     public Result MarkDeleting(DateTime utcNow)
@@ -79,6 +99,5 @@ public sealed class Sandbox : Entity
             ? Result.Success()
             : Result.Failure(SandboxErrors.NotFound);
 
-    public bool CanIssueCertificate() =>
-        Status is SandboxStatus.Provisioning or SandboxStatus.Running;
+    public bool CanIssueCertificate() => Status == SandboxStatus.Running;
 }

@@ -25,6 +25,10 @@ internal sealed class SandboxConfiguration : IEntityTypeConfiguration<Sandbox>
 
         builder.Property(sandbox => sandbox.CreatedOnUtc).IsRequired();
 
+        builder.Property(sandbox => sandbox.Host).HasMaxLength(255);
+
+        builder.Property(sandbox => sandbox.Port);
+
         builder.HasOne<User>()
             .WithMany()
             .HasForeignKey(sandbox => sandbox.OwnerUserId);
