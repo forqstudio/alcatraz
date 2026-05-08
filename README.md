@@ -48,13 +48,38 @@ Customers spin up isolated, ephemeral Linux sandboxes from a CLI, get a short-li
 
 ## Components
 
-| Component | Status | Description | Link |
-|---|---|---|---|
-| `alcatraz.core` | shipped | Firecracker microVM with AgentFS overlay-backed NFS root | [README](alcatraz.core/README.md) |
-| `alcatraz.worker` | shipped | NATS-driven Go worker that spawns and tears down VMs | [README](alcatraz.worker/README.md) |
-| `alcatraz.api` | shipped | .NET 8 control plane — device-flow auth proxy, sandbox CRUD, SSH CA | [README](alcatraz.api/README.md) |
-| `alcatraz.gateway` | planned | TLS-terminating SSH ingress in front of worker VMs | — |
-| `alcatraz.cli` | planned | Customer CLI — wraps device-flow login + sandbox commands + cert fetch | — |
+Each component owns one slice of the customer's path from `alcatraz login` to a shell inside a sandbox.
+
+### `alcatraz.cli` — the customer's entry point *(planned)*
+- Logs the customer in.
+- Creates, lists, and deletes sandboxes.
+- Fetches a short-lived SSH cert for a sandbox and opens a shell into it.
+- Holds no server state and no long-lived secrets.
+
+### `alcatraz.api` — the customer-facing control plane *(shipped, [README](alcatraz.api/README.md))*
+- Owns customer identity, registration, and the role/permission model.
+- Owns the `Sandbox` aggregate and its lifecycle (create, list, get, delete).
+- Acts as the SSH certificate authority — issues short-lived user certs scoped to a single sandbox.
+- Dispatches spawn and destroy work to workers.
+- Never holds customer SSH keys, never runs VMs.
+
+### `alcatraz.worker` — sandbox lifecycle on the host *(shipped, [README](alcatraz.worker/README.md))*
+- Claims spawn and destroy jobs and runs them.
+- Allocates host capacity (slots, IPs, TAPs) per sandbox.
+- Sets up and tears down per-sandbox networking and outbound NAT.
+- Provides each sandbox with a persistent, auditable filesystem overlay on top of the shared base image.
+- Boots and supervises the sandbox VM; cleans up on exit.
+
+### `alcatraz.core` — the sandbox itself *(shipped, [README](alcatraz.core/README.md))*
+- The Linux environment customers actually SSH into.
+- Owns the guest OS, the pre-installed developer tooling, and `sshd`.
+- Owns the boot-from-overlay contract: a clean, reusable base image plus a per-sandbox delta that survives restarts.
+- Trusts only certificates signed by the API's SSH CA.
+
+### `alcatraz.gateway` — single SSH ingress *(planned)*
+- Terminates TLS for incoming customer SSH connections from the public internet.
+- Routes each connection to the correct sandbox VM's `sshd`, using the sandbox principal embedded in the cert.
+- The only component reachable from outside the cluster on the SSH path.
 
 ## End-to-end request lifecycle
 
