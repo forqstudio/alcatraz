@@ -58,7 +58,9 @@ internal static class ResultExtensions
         error == DeviceAuthErrors.ExpiredToken ||
         error == DeviceAuthErrors.AccessDenied ||
         error == DeviceAuthErrors.InitiationFailed ||
-        error == DeviceAuthErrors.ExchangeFailed;
+        error == DeviceAuthErrors.ExchangeFailed ||
+        error == DeviceAuthErrors.RefreshFailed ||
+        error == DeviceAuthErrors.InvalidGrant;
 
     private static string TrimPrefix(string value, string prefix) =>
         value.StartsWith(prefix, StringComparison.Ordinal)

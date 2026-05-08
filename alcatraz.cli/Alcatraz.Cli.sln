@@ -1,0 +1,36 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.0.31903.59
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "src", "src", "{64868C74-D89A-41D9-A233-8DC4AAE4E6E2}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Alcatraz.Cli", "src\Alcatraz.Cli\Alcatraz.Cli.csproj", "{0F927B9D-037C-4F8E-A12F-81EE7201C328}"
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "test", "test", "{1E9747D1-C58C-4741-9838-BD02B192AE56}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Alcatraz.Cli.UnitTests", "test\Alcatraz.Cli.UnitTests\Alcatraz.Cli.UnitTests.csproj", "{B26189AA-DFD0-4672-A001-225FC29C461D}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{0F927B9D-037C-4F8E-A12F-81EE7201C328}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{0F927B9D-037C-4F8E-A12F-81EE7201C328}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{0F927B9D-037C-4F8E-A12F-81EE7201C328}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{0F927B9D-037C-4F8E-A12F-81EE7201C328}.Release|Any CPU.Build.0 = Release|Any CPU
+		{B26189AA-DFD0-4672-A001-225FC29C461D}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{B26189AA-DFD0-4672-A001-225FC29C461D}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{B26189AA-DFD0-4672-A001-225FC29C461D}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{B26189AA-DFD0-4672-A001-225FC29C461D}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(NestedProjects) = preSolution
+		{0F927B9D-037C-4F8E-A12F-81EE7201C328} = {64868C74-D89A-41D9-A233-8DC4AAE4E6E2}
+		{B26189AA-DFD0-4672-A001-225FC29C461D} = {1E9747D1-C58C-4741-9838-BD02B192AE56}
+	EndGlobalSection
+EndGlobal

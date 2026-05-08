@@ -87,13 +87,15 @@ For the design rationale and the full request lifecycle, see [`docs/customer-cli
 
 ## Running locally
 
+Local development is orchestrated by the repo-root [`docker-compose.yml`](../docker-compose.yml) — there's no per-component compose anymore.
+
 ```bash
-cd alcatraz.api
+cd ..                       # from alcatraz.api/, go up to the repo root
 docker compose up -d --build
 docker compose logs -f forqstudio.api  # wait for "Now listening on: http://[::]:8080"
 ```
 
-This brings up the API plus Keycloak, Postgres, Redis, NATS, Seq, an Alpine `sshd` stand-in for a Firecracker VM, and a one-shot container that generates the SSH CA into a shared volume.
+This brings up the API plus Keycloak, Postgres, Redis, NATS, Seq, an Alpine `sshd` stand-in for a Firecracker VM, and a one-shot container that generates the SSH CA into a shared volume. `alcatraz.worker` runs on the host (out of compose) and connects to NATS at `localhost:4222`; `alcatraz.cli` is built locally with `dotnet`.
 
 For the full register → device login → create sandbox → fetch cert → SSH walkthrough, see [`docs/local-end-to-end.md`](docs/local-end-to-end.md).
 

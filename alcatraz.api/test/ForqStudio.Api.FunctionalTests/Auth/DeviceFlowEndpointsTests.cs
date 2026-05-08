@@ -107,6 +107,55 @@ public class DeviceFlowEndpointsTests : IClassFixture<DeviceFlowEndpointsTests.F
         response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
     }
 
+    [Fact]
+    public async Task RefreshDeviceToken_HappyPath_ReturnsToken()
+    {
+        _factory.Client.RefreshAsync("rt", Arg.Any<CancellationToken>())
+            .Returns(Result.Success(new DeviceTokenResponse(
+                AccessToken: "fresh-at",
+                RefreshToken: "rotated-rt",
+                ExpiresIn: 300,
+                TokenType: "Bearer",
+                IdToken: null)));
+
+        var http = _factory.CreateClient();
+        var response = await http.PostAsJsonAsync(
+            "api/v1/auth/refresh",
+            new RefreshDeviceTokenRequest("rt"));
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var body = await response.Content.ReadFromJsonAsync<DeviceTokenResponse>();
+        body!.AccessToken.Should().Be("fresh-at");
+        body.RefreshToken.Should().Be("rotated-rt");
+    }
+
+    [Fact]
+    public async Task RefreshDeviceToken_InvalidGrant_Returns400_WithErrorExtension()
+    {
+        _factory.Client.RefreshAsync("rt", Arg.Any<CancellationToken>())
+            .Returns(Result.Failure<DeviceTokenResponse>(DeviceAuthErrors.InvalidGrant));
+
+        var http = _factory.CreateClient();
+        var response = await http.PostAsJsonAsync(
+            "api/v1/auth/refresh",
+            new RefreshDeviceTokenRequest("rt"));
+
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        var problem = await response.Content.ReadFromJsonAsync<System.Text.Json.JsonElement>();
+        problem.GetProperty("error").GetString().Should().Be("invalid_grant");
+    }
+
+    [Fact]
+    public async Task RefreshDeviceToken_MissingToken_Returns400()
+    {
+        var http = _factory.CreateClient();
+        var response = await http.PostAsJsonAsync(
+            "api/v1/auth/refresh",
+            new RefreshDeviceTokenRequest(""));
+
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+    }
+
     public sealed class Factory : WebApplicationFactory<Program>
     {
         public IDeviceAuthorizationClient Client { get; } = Substitute.For<IDeviceAuthorizationClient>();

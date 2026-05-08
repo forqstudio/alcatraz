@@ -7,9 +7,9 @@ This repository contains the build and launch scripts only. Generated artifacts 
 ## The Stack
 
 - Go: `1.25.0`
-- Docker: with Docker Compose (for NATS and Seq)
-- NATS: `latest` (with JetStream)
-- Seq: `latest` (structured log viewer; receives CLEF events from the worker)
+- Docker: NATS and Seq are provided by the repo-root `docker-compose.yml` (run alongside `alcatraz.api`); the worker itself runs on the host
+- NATS: `2.10` (with JetStream)
+- Seq: `2024.3` (structured log viewer; receives CLEF events from the worker)
 - Firecracker target: `v1.15.1`
 - AgentFS: in-process via the Go SDK (`github.com/tursodatabase/agentfs/sdk/go`); no `agentfs` CLI binary required
 - NFSv3 server: in-process via `github.com/willscott/go-nfs`
@@ -123,19 +123,23 @@ This produces `bin/alcatraz-worker` and `bin/spawn-client`.
 
 ## Run
 
-Start NATS and Seq:
+NATS and Seq are part of the repo-root compose stack — bring that up first (it also starts `alcatraz.api`, Keycloak, Postgres, Redis, the SSH CA init, and the demo sshd):
 
 ```bash
+cd ..   # to repo root
 docker compose up -d
 ```
 
-Seq UI: http://localhost:8081 (auth disabled for local dev). The worker ships structured events to `localhost:5341` over CLEF.
+Seq UI: http://localhost:8083 (auth disabled for local dev). The worker ships CLEF events to `localhost:5341`. NATS is on `localhost:4222`. The default `alcatraz.worker/.env` already targets these endpoints.
 
-Start the worker (must run as root):
+Start the worker on the host (must run as root):
 
 ```bash
-sudo ./bin/alcatraz-worker
+cd alcatraz.worker
+sudo -E ./bin/alcatraz-worker
 ```
+
+The worker is intentionally not part of `docker compose` — it needs KVM, CNI, and root-level network setup on the host.
 
 ## Configuration
 

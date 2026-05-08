@@ -212,14 +212,14 @@ Every endpoint and every domain rule below must ship with tests in this round. x
 ## End-to-end verification
 
 ```bash
-# 1. Bring up infra
-docker compose -f alcatraz.api/docker-compose.yml up -d postgres redis keycloak nats
-dotnet ef database update -p src/ForqStudio.Infrastructure -s src/ForqStudio.Api
+# 1. Bring up infra (consolidated root-level compose; brings up postgres, redis, keycloak, nats, seq, ca-init, demo sshd)
+docker compose up -d
+dotnet ef database update -p alcatraz.api/src/ForqStudio.Infrastructure -s alcatraz.api/src/ForqStudio.Api
 
 # 2. Generate CA key, point API at it
 ssh-keygen -t ed25519 -f /tmp/alcatraz_ca -N ""
 export Ssh__CA__PrivateKeyPath=/tmp/alcatraz_ca
-dotnet run --project src/ForqStudio.Api &
+dotnet run --project alcatraz.api/src/ForqStudio.Api &
 
 # 3. Keycloak prerequisite: enable "OAuth 2.0 Device Authorization Grant"
 #    on forqstudio-auth-client in the realm's admin UI.

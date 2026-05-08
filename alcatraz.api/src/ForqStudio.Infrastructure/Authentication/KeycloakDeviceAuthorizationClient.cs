@@ -15,6 +15,7 @@ internal sealed class KeycloakDeviceAuthorizationClient(
     ) : IDeviceAuthorizationClient
 {
     private const string DeviceCodeGrantType = "urn:ietf:params:oauth:grant-type:device_code";
+    private const string RefreshTokenGrantType = "refresh_token";
 
     private readonly KeycloakOptions keycloakOptions = keycloakOptions.Value;
 
@@ -126,6 +127,64 @@ internal sealed class KeycloakDeviceAuthorizationClient(
         }
     }
 
+    public async Task<Result<DeviceTokenResponse>> RefreshAsync(
+        string refreshToken,
+        CancellationToken cancellationToken = default)
+    {
+        var parameters = new[]
+        {
+            new KeyValuePair<string, string>("grant_type", RefreshTokenGrantType),
+            new KeyValuePair<string, string>("refresh_token", refreshToken),
+            new KeyValuePair<string, string>("client_id", keycloakOptions.AuthClientId),
+            new KeyValuePair<string, string>("client_secret", keycloakOptions.AuthClientSecret),
+        };
+
+        try
+        {
+            using var content = new FormUrlEncodedContent(parameters);
+            using var response = await httpClient.PostAsync(
+                keycloakOptions.TokenUrl,
+                content,
+                cancellationToken);
+
+            if (response.IsSuccessStatusCode)
+            {
+                var success = await response.Content.ReadFromJsonAsync<DeviceTokenKeycloakResponse>(
+                    cancellationToken: cancellationToken);
+
+                if (success is null || string.IsNullOrEmpty(success.AccessToken))
+                {
+                    return Result.Failure<DeviceTokenResponse>(DeviceAuthErrors.RefreshFailed);
+                }
+
+                return new DeviceTokenResponse(
+                    success.AccessToken,
+                    success.RefreshToken,
+                    success.ExpiresIn,
+                    success.TokenType,
+                    success.IdToken);
+            }
+
+            KeycloakErrorResponse? error = null;
+            try
+            {
+                error = await response.Content.ReadFromJsonAsync<KeycloakErrorResponse>(
+                    cancellationToken: cancellationToken);
+            }
+            catch (JsonException)
+            {
+                // fall through to generic error
+            }
+
+            return Result.Failure<DeviceTokenResponse>(MapRefreshError(error?.Error));
+        }
+        catch (HttpRequestException ex)
+        {
+            logger.LogError(ex, "Refresh token transport error");
+            return Result.Failure<DeviceTokenResponse>(DeviceAuthErrors.RefreshFailed);
+        }
+    }
+
     private static Error MapError(string? keycloakError) =>
         keycloakError switch
         {
@@ -134,5 +193,12 @@ internal sealed class KeycloakDeviceAuthorizationClient(
             "expired_token" => DeviceAuthErrors.ExpiredToken,
             "access_denied" => DeviceAuthErrors.AccessDenied,
             _ => DeviceAuthErrors.ExchangeFailed,
+        };
+
+    private static Error MapRefreshError(string? keycloakError) =>
+        keycloakError switch
+        {
+            "invalid_grant" => DeviceAuthErrors.InvalidGrant,
+            _ => DeviceAuthErrors.RefreshFailed,
         };
 }

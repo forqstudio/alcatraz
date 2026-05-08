@@ -50,10 +50,10 @@ Customers spin up isolated, ephemeral Linux sandboxes from a CLI, get a short-li
 
 Each component owns one slice of the customer's path from `alcatraz login` to a shell inside a sandbox.
 
-### `alcatraz.cli` — the customer's entry point *(planned)*
-- Logs the customer in.
+### `alcatraz.cli` — the customer's entry point *(shipped, [README](alcatraz.cli/README.md))*
+- Logs the customer in via OAuth device flow (proxied by the API).
 - Creates, lists, and deletes sandboxes.
-- Fetches a short-lived SSH cert for a sandbox and opens a shell into it.
+- Fetches a short-lived SSH cert for a sandbox and opens a shell into it via stock `ssh`.
 - Holds no server state and no long-lived secrets.
 
 ### `alcatraz.api` — the customer-facing control plane *(shipped, [README](alcatraz.api/README.md))*
@@ -92,21 +92,159 @@ Each component owns one slice of the customer's path from `alcatraz login` to a 
 
 ## Local development
 
-Each component has its own `docker compose` / `make` workflow. Start with the component you're working on:
+A single root-level [`docker-compose.yml`](docker-compose.yml) brings up everything except the worker (which needs host KVM/CNI) and the CLI (built locally). The compose stack alone is enough for an end-to-end test of the customer flow — register → login → create sandbox → fetch SSH cert → SSH into a sandbox stand-in — without the worker or the gateway.
 
-- [`alcatraz.api/README.md`](alcatraz.api/README.md) — control plane plus Keycloak, Postgres, Redis, NATS, Seq, and a stand-in `sshd` container.
-- [`alcatraz.worker/README.md`](alcatraz.worker/README.md) — NATS subscriber + Firecracker (requires KVM and CNI plugins on the host).
+### Prerequisites
+
+- Docker Compose
+- `curl`, `jq`, `ssh-keygen`, `ssh` on the host
+- A web browser (only if you take the real device-flow path in step 2)
+- .NET 8 SDK (only if you want to run the CLI or the API on the host)
+
+### Bring up the stack
+
+```bash
+# from the repo root
+docker compose up -d --build
+docker compose logs -f forqstudio.api    # wait for "Now listening on: http://[::]:8080"
+```
+
+The first build is slow (multi-stage .NET image). Subsequent runs are fast — drop `--build` unless you've edited `alcatraz.api/src/`, `alcatraz.api/.files/ca-init/`, or `alcatraz.api/.files/demo-sshd/`.
+
+What's running once it's up:
+
+| Service | Port | Purpose |
+|---|---|---|
+| `forqstudio.api` | `:8080` | Control plane API |
+| `forqstudio-idp` | `:8082` | Keycloak with the `forqstudio` realm pre-imported (device flow enabled) |
+| `forqstudio-db` | `:5432` | Postgres |
+| `forqstudio-redis` | `:6379` | Redis |
+| `forqstudio-nats` | `:4222` (mon `:8222`) | NATS broker |
+| `forqstudio-seq` | `:8083` | Seq log viewer |
+| `forqstudio-ca-init` | — | One-shot: writes the SSH CA key into the shared `alcatraz_ca` volume |
+| `forqstudio-demo-sshd` | `:2222` | Alpine `sshd` standing in for a Firecracker VM (mirrors the rootfs convention) |
+
+`forqstudio-demo-sshd` exists so the cert pipeline is testable without the worker. It mounts the same CA pubkey, runs `sshd` with `TrustedUserCAKeys` and `AuthorizedPrincipalsFile`, and is what `alcatraz.core` looks like in production minus Firecracker.
+
+### End-to-end walkthrough
+
+This uses `curl` and stock `ssh` so each step is verifiable without CLI code. The CLI path is the same flow with friendlier UX — see [`alcatraz.cli/README.md`](alcatraz.cli/README.md).
+
+#### 1. Register a user
+
+The realm ships empty of human users. Registering through the API creates the Keycloak account and the local `users` row in one transaction.
+
+```bash
+curl -sX POST http://localhost:8080/api/v1/users/register \
+  -H 'content-type: application/json' \
+  -d '{"email":"demo@alcatraz.local","firstName":"Demo","lastName":"User","password":"demopass"}'
+```
+
+#### 2. Get an access token
+
+**Fast path** (password grant, no browser — useful for scripting):
+
+```bash
+TOKEN=$(curl -sX POST http://localhost:8080/api/v1/users/login \
+  -H 'content-type: application/json' \
+  -d '{"email":"demo@alcatraz.local","password":"demopass"}' | jq -r .accessToken)
+```
+
+**Real device-flow path** (what the CLI does):
+
+```bash
+INIT=$(curl -sX POST http://localhost:8080/api/v1/auth/device)
+DEVICE_CODE=$(echo "$INIT" | jq -r .deviceCode)
+echo "Open: $(echo "$INIT" | jq -r .verificationUriComplete)"
+read -p "Press Enter once you've signed in..."
+
+TOKEN=$(curl -sX POST http://localhost:8080/api/v1/auth/device/token \
+  -H 'content-type: application/json' \
+  -d "{\"deviceCode\":\"$DEVICE_CODE\"}" | jq -r .accessToken)
+```
+
+While polling, `POST /auth/device/token` returns HTTP 400 with `"error": "authorization_pending"` until the browser sign-in completes — that's the RFC 8628 idiom the CLI implements.
+
+#### 3. Create a sandbox
+
+```bash
+SANDBOX=$(curl -sX POST http://localhost:8080/api/v1/sandboxes \
+  -H "authorization: bearer $TOKEN" -H 'content-type: application/json' \
+  -d '{"vcpus":2,"memoryMib":2048}')
+ID=$(echo "$SANDBOX" | jq -r .id)
+```
+
+The API persists the row, writes a `SandboxRequested` outbox message in the same transaction, and a Quartz job publishes `vm.spawn` on NATS. With no worker running, the sandbox stays in `Provisioning` — expected. To watch the message land:
+
+```bash
+docker run --rm --network alcatraz_default natsio/nats-box:latest \
+  nats sub vm.spawn -s nats://forqstudio-nats:4222
+```
+
+#### 4. Stand in for the worker
+
+The worker would normally write the sandbox UUID into `/etc/ssh/auth_principals/al` in the AgentFS overlay before booting the VM. Replicate that on the demo container:
+
+```bash
+docker exec ForqStudio.DemoSshd sh -c "echo $ID > /etc/ssh/auth_principals/al"
+```
+
+#### 5. Fetch an SSH cert
+
+```bash
+ssh-keygen -t ed25519 -f /tmp/id_alcatraz -N "" -C "demo@workstation"
+PUB=$(cat /tmp/id_alcatraz.pub)
+
+curl -sX POST "http://localhost:8080/api/v1/sandboxes/$ID/ssh-cert" \
+  -H "authorization: bearer $TOKEN" -H 'content-type: application/json' \
+  -d "{\"sshPublicKey\":\"$PUB\"}" | jq -r .cert > /tmp/id_alcatraz-cert.pub
+
+ssh-keygen -L -f /tmp/id_alcatraz-cert.pub
+# Type: user cert | Principal: <ID> | Valid: now → +24h | Signing CA: alcatraz-demo-ca
+```
+
+#### 6. SSH into the sandbox
+
+```bash
+ssh -i /tmp/id_alcatraz \
+    -i /tmp/id_alcatraz-cert.pub \
+    -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+    -p 2222 al@localhost
+```
+
+You should land in a shell as `al`; `sudo whoami` returns `root`. Stock `ssh` + stock `sshd` accepted a cert minted by the API's CA, scoped to a specific sandbox UUID, with no shared keys ever changing hands. That's the whole proof.
+
+### Resetting the stack
+
+```bash
+docker compose down -v   # drops keycloak_data and alcatraz_ca volumes
+docker compose up -d --build
+```
+
+You **must** wipe volumes if you change the realm export — Keycloak only imports on first boot. Wiping `alcatraz_ca` regenerates the CA key, which invalidates every previously issued cert.
+
+### Running the CLI or worker
+
+- **CLI:** `dotnet run --project alcatraz.cli/src/Alcatraz.Cli -- login`. Talks to `http://localhost:8080` by default and runs the same device-flow + sandbox CRUD walkthrough above with friendlier UX.
+- **Worker:** `cd alcatraz.worker && make build && sudo -E ./bin/alcatraz-worker`. Host-run because it needs KVM and CNI plugins; not in compose.
+
+### Per-component notes
+
+- [`alcatraz.api/README.md`](alcatraz.api/README.md) — control plane (the `forqstudio.api` service in compose).
+- [`alcatraz.worker/README.md`](alcatraz.worker/README.md) — NATS subscriber + Firecracker, host-run (requires KVM and CNI plugins).
 - [`alcatraz.core/README.md`](alcatraz.core/README.md) — kernel and Ubuntu rootfs build (requires `sudo`, `debootstrap`, and the host `agentfs` binary).
-
-End-to-end demo without writing the CLI: see [`alcatraz.api/docs/local-end-to-end.md`](alcatraz.api/docs/local-end-to-end.md). It covers the full register → device login → create sandbox → fetch cert → SSH walkthrough using only `curl` and stock `ssh`, against the `alcatraz.api` compose stack.
+- [`alcatraz.cli/README.md`](alcatraz.cli/README.md) — customer CLI.
+- [`alcatraz.api/docs/local-end-to-end.md`](alcatraz.api/docs/local-end-to-end.md) — deeper notes: negative test cases, what the demo doesn't prove yet.
 
 ## Project layout
 
 ```
 alcatraz/
+├── docker-compose.yml # single source of truth for local dev (API + IdP + db + cache + msgq + demo sshd)
 ├── alcatraz.api/      # .NET 8 control plane: auth proxy, sandbox aggregate, SSH CA
+├── alcatraz.cli/      # .NET 8 customer CLI: device-flow login, sandbox CRUD, SSH cert fetch + ssh wrapper
 ├── alcatraz.core/     # Firecracker kernel/rootfs build scripts and launchers
-├── alcatraz.worker/   # Go worker: NATS sub + CNI + in-process AgentFS/NFS + Firecracker SDK
+├── alcatraz.worker/   # Go worker: NATS sub + CNI + in-process AgentFS/NFS + Firecracker SDK (host-run, not in compose)
 └── plans/             # cross-component design docs
 ```
 
@@ -114,3 +252,4 @@ alcatraz/
 
 - [`plans/customer-vm-access-ssh-ca.md`](plans/customer-vm-access-ssh-ca.md) — system-of-record for SSH CA, device flow, and gateway architecture.
 - [`plans/alcatraz-api-cli-endpoints.md`](plans/alcatraz-api-cli-endpoints.md) — control-plane endpoint spec.
+- [`plans/alcatraz-cli.md`](plans/alcatraz-cli.md) — CLI implementation plan, including the API refresh-token endpoint and the docker-compose consolidation.

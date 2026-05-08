@@ -9,6 +9,10 @@ public interface IDeviceAuthorizationClient
     Task<Result<DeviceTokenResponse>> ExchangeAsync(
         string deviceCode,
         CancellationToken cancellationToken = default);
+
+    Task<Result<DeviceTokenResponse>> RefreshAsync(
+        string refreshToken,
+        CancellationToken cancellationToken = default);
 }
 
 public sealed record DeviceAuthorizationResponse(
@@ -51,4 +55,12 @@ public static class DeviceAuthErrors
     public static readonly Error ExchangeFailed = new(
         "Auth.Device.ExchangeFailed",
         "Failed to exchange the device code for an access token");
+
+    public static readonly Error RefreshFailed = new(
+        "Auth.Device.RefreshFailed",
+        "Failed to refresh the access token");
+
+    public static readonly Error InvalidGrant = new(
+        "Auth.Device.InvalidGrant",
+        "The refresh token is no longer valid");
 }

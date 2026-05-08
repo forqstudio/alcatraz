@@ -461,10 +461,12 @@ dotnet ef database update --project src/ForqStudio.Infrastructure --startup-proj
 ## Running the Application
 
 ```bash
-# Start infrastructure (PostgreSQL, Redis, Keycloak)
-docker-compose up -d
+# Bring up the full stack from the repo root (single consolidated docker-compose.yml)
+cd ..   # repo root, NOT alcatraz.api/
+docker compose up -d
 
-# Run API
+# Run API on the host (alternative to the compose-built `forqstudio.api` service)
+cd alcatraz.api
 dotnet run --project src/ForqStudio.Api
 
 # Run tests

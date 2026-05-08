@@ -25,10 +25,12 @@ A `forqstudio-demo-sshd` Alpine container stands in for a real Firecracker VM. I
 
 ## First-time bring-up
 
+The compose file lives at the repo root (`/docker-compose.yml`). Run all commands from there.
+
 If you've previously run `docker compose up`, you must wipe the Keycloak volume so the updated realm (with device flow enabled) is re-imported. Keycloak only imports on first boot:
 
 ```bash
-cd alcatraz.api
+cd /path/to/alcatraz   # repo root, NOT alcatraz.api/
 docker compose down -v
 docker compose up -d --build
 ```
@@ -40,7 +42,7 @@ docker compose logs -f forqstudio.api
 # Wait for "Now listening on: http://[::]:8080"
 ```
 
-Subsequent runs just need `docker compose up -d`. Re-run with `--build` whenever you edit `.files/ca-init/`, `.files/demo-sshd/`, or `src/ForqStudio.Api/Dockerfile`.
+Subsequent runs just need `docker compose up -d`. Re-run with `--build` whenever you edit `alcatraz.api/.files/ca-init/`, `alcatraz.api/.files/demo-sshd/`, or `alcatraz.api/src/ForqStudio.Api/Dockerfile`.
 
 For the architecture that sits behind these endpoints — domain model, NATS contract, CA, error mapping — see `customer-cli-and-sandboxes.md`.
 
@@ -100,7 +102,7 @@ ID=$(echo "$SANDBOX" | jq -r .id)
 Watch the spawn fire on NATS in another shell:
 
 ```bash
-docker run --rm --network alcatrazapi_default natsio/nats-box:latest \
+docker run --rm --network alcatraz_default natsio/nats-box:latest \
   nats sub vm.spawn -s nats://forqstudio-nats:4222
 ```
 

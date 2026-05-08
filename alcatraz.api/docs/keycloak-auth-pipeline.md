@@ -443,12 +443,12 @@ A Keycloak realm export is included at `.files/forqstudio-realm-export.json` and
 **Prerequisites:** Docker Desktop
 
 ```bash
-# Start all infrastructure (Keycloak, PostgreSQL, Redis, Seq)
-docker-compose up -d
+# from the repo root — the consolidated compose file lives there
+docker compose up -d
 
-# The API is available at http://localhost:5000
+# The API is available at http://localhost:8080
 # Keycloak admin console: http://localhost:8082 (admin / admin)
-# Seq log viewer: http://localhost:5341
+# Seq log viewer: http://localhost:8083
 ```
 
 **Database migrations** run automatically on startup.

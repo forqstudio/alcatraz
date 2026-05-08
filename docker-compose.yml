@@ -1,15 +1,21 @@
-version: '3.4'
-
 services:
   forqstudio.api:
     image: ${DOCKER_REGISTRY-}forqstudioapi
     container_name: ForqStudio.Api
     build:
-      context: ./src
+      context: ./alcatraz.api/src
       dockerfile: ForqStudio.Api/Dockerfile
     environment:
+      - ASPNETCORE_ENVIRONMENT=Development
+      - ASPNETCORE_HTTP_PORTS=8080
       - Ssh__CA__PrivateKeyPath=/run/alcatraz-ca/alcatraz_ca
       - Nats__Url=nats://forqstudio-nats:4222
+      # Point the cert response at the demo sshd so `alcatraz ssh` works out of the box.
+      # In production, override these to the real ssh.alcatraz.io gateway.
+      - Gateway__Host=localhost
+      - Gateway__Port=2222
+    ports:
+      - "8080:8080"
     volumes:
       - alcatraz_ca:/run/alcatraz-ca:ro
     depends_on:
@@ -27,7 +33,7 @@ services:
         condition: service_completed_successfully
 
   forqstudio-db:
-    image: postgres:latest
+    image: postgres:16
     container_name: ForqStudio.Db
     environment:
       - POSTGRES_DB=forqstudio
@@ -36,7 +42,7 @@ services:
     volumes:
       - ./.containers/database:/var/lib/postgresql
     ports:
-      - 5432:5432
+      - "5432:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres -d forqstudio"]
       interval: 5s
@@ -44,7 +50,7 @@ services:
       retries: 5
 
   forqstudio-idp:
-    image: quay.io/keycloak/keycloak:latest
+    image: quay.io/keycloak/keycloak:25.0
     container_name: ForqStudio.Identity
     command: start-dev --import-realm
     environment:
@@ -58,41 +64,41 @@ services:
       - KC_HOSTNAME_STRICT_BACKCHANNEL=false
     volumes:
       - keycloak_data:/opt/keycloak/data
-      - ./.files/forqstudio-realm-export.json:/opt/keycloak/data/import/realm.json
+      - ./alcatraz.api/.files/forqstudio-realm-export.json:/opt/keycloak/data/import/realm.json
     ports:
-      - 8082:8080
+      - "8082:8080"
 
   forqstudio-seq:
-    image: datalust/seq:latest
+    image: datalust/seq:2024.3
     container_name: ForqStudio.Seq
     environment:
       - ACCEPT_EULA=Y
       - SEQ_FIRSTRUN_NOAUTHENTICATION=true
     ports:
-      - 5341:5341
-      - 8083:80
+      - "5341:5341"
+      - "8083:80"
 
   forqstudio-redis:
-    image: redis:latest
+    image: redis:7
     container_name: ForqStudio.Redis
     restart: always
     ports:
-      - '6379:6379'
+      - "6379:6379"
 
   forqstudio-nats:
-    image: nats:latest
+    image: nats:2.10
     container_name: ForqStudio.Nats
     command: ["-js", "-m", "8222"]
     ports:
-      - '4222:4222'
-      - '8222:8222'
+      - "4222:4222"
+      - "8222:8222"
 
   # Generates the shared SSH CA key into the alcatraz_ca volume on first boot.
   # Idempotent: skips if a key already exists.
   forqstudio-ca-init:
     container_name: ForqStudio.CaInit
     build:
-      context: ./.files/ca-init
+      context: ./alcatraz.api/.files/ca-init
       dockerfile: Dockerfile
     volumes:
       - alcatraz_ca:/run/alcatraz-ca
@@ -105,10 +111,10 @@ services:
   forqstudio-demo-sshd:
     container_name: ForqStudio.DemoSshd
     build:
-      context: ./.files/demo-sshd
+      context: ./alcatraz.api/.files/demo-sshd
       dockerfile: Dockerfile
     ports:
-      - '2222:22'
+      - "2222:22"
     volumes:
       - alcatraz_ca:/run/alcatraz-ca:ro
     depends_on:
