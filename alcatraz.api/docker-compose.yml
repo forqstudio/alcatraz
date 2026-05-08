@@ -1,0 +1,68 @@
+version: '3.4'
+
+services:
+  forqstudio.api:
+    image: ${DOCKER_REGISTRY-}forqstudioapi
+    container_name: ForqStudio.Api
+    build:
+      context: ./src
+      dockerfile: ForqStudio.Api/Dockerfile
+    depends_on:
+      forqstudio-db:
+        condition: service_healthy
+      forqstudio-idp:
+        condition: service_started
+      forqstudio-seq:
+        condition: service_started
+      forqstudio-redis:
+        condition: service_started
+
+  forqstudio-db:
+    image: postgres:latest
+    container_name: ForqStudio.Db
+    environment:
+      - POSTGRES_DB=forqstudio
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+    volumes:
+      - ./.containers/database:/var/lib/postgresql
+    ports:
+      - 5432:5432
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d forqstudio"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  forqstudio-idp:
+    image: quay.io/keycloak/keycloak:latest
+    container_name: ForqStudio.Identity
+    command: start-dev --import-realm
+    environment:
+      - KEYCLOAK_ADMIN=admin
+      - KEYCLOAK_ADMIN_PASSWORD=admin
+    volumes:
+      - keycloak_data:/opt/keycloak/data
+      - ./.files/forqstudio-realm-export.json:/opt/keycloak/data/import/realm.json
+    ports:
+      - 8082:8080
+
+  forqstudio-seq:
+    image: datalust/seq:latest
+    container_name: ForqStudio.Seq
+    environment:
+      - ACCEPT_EULA=Y
+      - SEQ_FIRSTRUN_NOAUTHENTICATION=true
+    ports:
+      - 5341:5341
+      - 8083:80
+  
+  forqstudio-redis:
+    image: redis:latest
+    container_name: ForqStudio.Redis
+    restart: always
+    ports:
+      - '6379:6379'
+
+volumes:
+  keycloak_data:
