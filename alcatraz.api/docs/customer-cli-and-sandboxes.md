@@ -10,7 +10,7 @@ Three concerns sit behind these endpoints:
 2. **Sandbox lifecycle** — a new `Sandbox` aggregate (provisioning → running → deleting → deleted/failed) whose state changes are dispatched to `alcatraz.worker` over NATS.
 3. **SSH Certificate Authority** — a short-lived OpenSSH user certificate is issued for each connection, principal-scoped to a single sandbox.
 
-The full end-to-end design (gateway, worker callback, KRL, L2 isolation) lives in `plans/customer-vm-access-ssh-ca.md` at the repo root. This doc covers the slice that ships in `alcatraz.api`.
+The full end-to-end design (gateway, worker callback, L2 isolation) lives in `plans/architecture.md` at the repo root; deferred items (KRL, multi-host) are in `plans/open-issues.md`. This doc covers the slice that ships in `alcatraz.api`.
 
 > **Trying it locally?** `docs/local-end-to-end.md` walks through `docker compose up` → device-flow login → create sandbox → fetch SSH cert → SSH into a stand-in container that mimics the rootfs. The gateway and the real worker aren't involved in that demo; the cert pipeline is exercised against a stock `sshd`.
 

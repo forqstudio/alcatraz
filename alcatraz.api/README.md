@@ -133,8 +133,8 @@ test/
 - [`docs/keycloak-auth-pipeline.md`](docs/keycloak-auth-pipeline.md) — code-level tour of the Keycloak / JWT / `[HasPermission]` pipeline
 - [`docs/authentication-authorization.md`](docs/authentication-authorization.md) — long-form authn/authz reference
 - [`docs/outbox-pattern.md`](docs/outbox-pattern.md) — outbox semantics and Quartz wiring
-- [`../plans/customer-vm-access-ssh-ca.md`](../plans/customer-vm-access-ssh-ca.md) — system-level SSH CA + device flow + gateway design
-- [`../plans/alcatraz-api-cli-endpoints.md`](../plans/alcatraz-api-cli-endpoints.md) — endpoint spec this README mirrors
+- [`../plans/architecture.md`](../plans/architecture.md) — system-level SSH CA, device flow, NATS contract, sandbox endpoints, Traefik gateway
+- [`../plans/open-issues.md`](../plans/open-issues.md) — remaining work (tenant isolation, secrets, reliability, observability, deferred items)
 - [`.claude/CLAUDE.md`](.claude/CLAUDE.md) — coding conventions enforced in this codebase
 
 ---

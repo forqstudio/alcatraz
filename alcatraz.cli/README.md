@@ -20,7 +20,7 @@ The CLI never talks to Keycloak directly — it goes through `alcatraz.api`, whi
 
 `alcatraz ssh <id>` polls the API until the worker has reported the sandbox as `Running` (then the cert response carries the right endpoint). For local dev (no Traefik) it dials the per-sandbox VM IP directly; for production it sets the SNI on `openssl s_client` to the sandbox UUID so Traefik can route by it.
 
-For the system-level design of how SSH access works, see [`../plans/customer-vm-access-ssh-ca.md`](../plans/customer-vm-access-ssh-ca.md).
+For the system-level design of how SSH access works, see [`../plans/architecture.md`](../plans/architecture.md).
 
 ---
 
@@ -157,4 +157,4 @@ test/Alcatraz.Cli.UnitTests/                      # mirrors src/, plus TempConfi
 dotnet test alcatraz.cli/Alcatraz.Cli.sln
 ```
 
-The full design and the implementation plan are in [`../plans/alcatraz-cli.md`](../plans/alcatraz-cli.md).
+The CLI's place in the system is described in [`../plans/architecture.md`](../plans/architecture.md).

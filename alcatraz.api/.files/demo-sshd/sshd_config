@@ -1,5 +1,5 @@
 # Demo sshd config — mirrors the rootfs configuration documented in
-# plans/customer-vm-access-ssh-ca.md. Real Alcatraz VMs use the same
+# plans/architecture.md. Real Alcatraz VMs use the same
 # TrustedUserCAKeys + AuthorizedPrincipalsFile pair; the worker writes
 # the sandbox UUID into /etc/ssh/auth_principals/al.
 

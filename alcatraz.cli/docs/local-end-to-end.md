@@ -176,4 +176,4 @@ Add `-v` to `docker compose down` to drop the Keycloak / CA / Traefik volumes to
 - L2 isolation between VMs on a shared bridge — see [`../../alcatraz.worker/docs/network-isolation.md`](../../alcatraz.worker/docs/network-isolation.md).
 - Multi-host workers behind a NAT — the bridge subnet `172.16.0.0/24` is single-host today.
 
-Those are tracked in [`../../plans/end-to-end-wrap-up.md`](../../plans/end-to-end-wrap-up.md) § "Out of scope" and in [`../../plans/customer-vm-access-ssh-ca.md`](../../plans/customer-vm-access-ssh-ca.md).
+Those are tracked in [`../../plans/open-issues.md`](../../plans/open-issues.md); shipped behaviour is in [`../../plans/architecture.md`](../../plans/architecture.md).

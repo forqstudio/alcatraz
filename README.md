@@ -373,10 +373,8 @@ The .NET projects (`alcatraz.api`, `alcatraz.cli`) don't ship a test suite yet �
 
 ## Design references
 
-- [`plans/customer-vm-access-ssh-ca.md`](plans/customer-vm-access-ssh-ca.md) — system-of-record for SSH CA, device flow, and gateway architecture.
-- [`plans/alcatraz-api-cli-endpoints.md`](plans/alcatraz-api-cli-endpoints.md) — control-plane endpoint spec.
-- [`plans/alcatraz-cli.md`](plans/alcatraz-cli.md) — CLI implementation plan.
-- [`plans/end-to-end-wrap-up.md`](plans/end-to-end-wrap-up.md) — wrap-up plan covering the worker-reports-back pipeline, overlay writes, Traefik+routes ingress.
+- [`plans/architecture.md`](plans/architecture.md) — consolidated record of shipped decisions: SSH CA, device flow, NATS contract, Traefik gateway, overlay writes, compose layout.
+- [`plans/open-issues.md`](plans/open-issues.md) — remaining work tagged by severity (tenant isolation, secrets, reliability, observability, deferred items).
 
 ## Deployment
 
