@@ -214,7 +214,7 @@ Two profiles:
 ```bash
 # from the repo root
 docker compose up -d --build
-docker compose logs -f alcatraz.api    # wait for "Now listening on: http://[::]:8080"
+docker compose logs -f alcatraz.api    # wait for "Now listening on: http://[::]:8080", then Ctrl-C
 ```
 
 The first build is slow (multi-stage .NET image). Subsequent runs are fast — drop `--build` unless you've edited `alcatraz.api/src/`, `alcatraz.api/.files/ca-init/`, or compose itself.
@@ -233,10 +233,20 @@ What's running by default:
 
 ### Start the worker
 
-The worker is host-run. From the repo root, sync the CA pubkey out of the shared compose volume so the worker can plant it into each VM's overlay. `/run` is tmpfs, so re-run this after every host reboot — the worker fails fast at startup if the file is missing.
+The worker is host-run.
+
+**Why the CA pubkey has to be synced first.** `alcatraz.api` is the SSH certificate authority — it holds an ed25519 *private* key (mounted from the `alcatraz_ca` Docker volume) and uses it to sign 24-hour user certificates the CLI presents to a sandbox's `sshd`. For `sshd` to trust those certs, every VM needs the matching *public* key planted in `/etc/ssh/trusted_user_ca_keys` before boot. The worker is the component that writes that file into each per-sandbox overlay — but the worker runs on the host, outside compose, so it can't read the `alcatraz_ca` Docker volume directly. `sync-ca-pubkey.sh` is the bridge: it copies just the public key out of the volume to a path on the host the worker can read.
+
+This is also why Keycloak isn't the SSH CA. Keycloak authenticates the *human* (issuing JWTs the CLI presents to the API). The API authorises the *SSH connection* (issuing OpenSSH certs the CLI presents to `sshd`). `sshd` doesn't speak OAuth — it only validates SSH certs against a trusted CA pubkey, which is exactly what this sync makes available.
+
+**Why `/run`.** `/run` is a Linux convention for *runtime* state — files programs need while running but should never persist across a reboot. On this host (and most modern Linuxes) it's mounted as `tmpfs`, a RAM-backed filesystem, so contents are wiped at boot and never hit disk. That's a good fit for a public key that's cheap to re-derive from the volume, and it means there's no stale on-disk copy to forget about. The cost is that **you must re-run the sync after every host reboot**.
+
+**Why the *worker* fails fast (not the API) when the pubkey is missing.** The API doesn't read the public key — it holds the *private* key and signs certs with it; if the API's private key is missing, the failure is loud and obvious on the first cert request. The worker is the component that writes `trusted_user_ca_keys` into each VM's overlay before boot, so the worker is the only process whose job depends on that file existing on the host. If the worker started without it, every spawn would still *succeed* end-to-end (VM boots, `vm.ready` fires, status flips to `Running`, the API issues a cert), and only the customer's first SSH attempt would fail — silently, with a generic `Permission denied (publickey)`. That's the worst-case failure mode: looks healthy, isn't, customer hits it last. So the worker checks the file at startup and refuses to start if it's missing (`alcatraz.worker/cmd/alcatraz-worker/main.go:38-45`), and the spawn path double-checks it at every claim (`internal/vm/spawn.go:247`).
+
+The script writes to `/run/alcatraz-ca/` and will prompt for sudo.
 
 ```bash
-alcatraz.worker/scripts/sync-ca-pubkey.sh
+sudo alcatraz.worker/scripts/sync-ca-pubkey.sh
 
 cd alcatraz.worker
 make build
@@ -350,10 +360,11 @@ The load-bearing ones at deploy time:
 
 ```bash
 docker compose down -v   # drops keycloak_data, alcatraz_ca, traefik_dynamic, traefik_acme volumes
+rm -f ~/.config/alcatraz/known_hosts   # bridge IPs (e.g. 172.16.0.10) are reused across resets with a fresh host key
 docker compose up -d --build
 ```
 
-You **must** wipe volumes if you change the realm export — Keycloak only imports on first boot. Wiping `alcatraz_ca` regenerates the CA key (invalidates every previously issued cert). Wiping `traefik_acme` forces ACME re-issuance on the next gateway start.
+You **must** wipe volumes if you change the realm export — Keycloak only imports on first boot. Wiping `alcatraz_ca` regenerates the CA key (invalidates every previously issued cert). Wiping `traefik_acme` forces ACME re-issuance on the next gateway start. The `known_hosts` purge prevents `Host key verification failed` on the next `alcatraz ssh` after a fresh sandbox lands on a previously-used VM IP.
 
 ## Status
 

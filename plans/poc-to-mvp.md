@@ -72,6 +72,8 @@ Each wave is independently shippable; W1 is the must-do-before-real-customers cu
 | W2.8 | `/health` gates on NATS + Postgres reachability |
 | W2.9 | OpenTelemetry → Prom: spawn duration histogram, spawn-failure-reason counter, active-sandboxes gauge per user |
 | W2.10 | GitHub Actions CI: build + `dotnet test` + `make test`; gate merges |
+| W2.11 | Per-sandbox outbound egress policy (default-deny + allow-list, applied via `iptables` on the worker keyed on TAP). Prevents a compromised sandbox from being a bot/exfil node | new `internal/vm/egress.go`, spawn/destroy hooks |
+| W2.12 | Keycloak production hardening: external Postgres for Keycloak, brute-force protection enabled, TOTP/WebAuthn required for admin realm, realm-export drift check in CI | `docker-compose.yml`, realm json |
 
 ### Wave 3 — Customer polish (~3–5 days)
 
@@ -80,12 +82,14 @@ Each wave is independently shippable; W1 is the must-do-before-real-customers cu
 - W3.3 Plumb `Failed` through API + CLI as a first-class state.
 - W3.4 Sandbox-scoped correlation ID stamped at create, propagated through API/worker/routes logs.
 - W3.5 Customer-facing quickstart, troubleshooting, "what persists / what doesn't" doc.
+- W3.6 CLI distribution: signed binaries via Homebrew tap + `winget`, version pin in API responses so an out-of-date CLI surfaces an upgrade prompt instead of a confusing parse error.
 
 ### Explicit non-goals for MVP (real concerns, but defer)
 
 - **KRL / sub-TTL revocation** — 24h TTL is the revocation primitive; document it.
-- **Multi-host worker pool / non-colliding subnets** — single-host is fine for first paying customer; address before scaling out.
-- **HSM/KMS for the CA key** — file mount with tight FS perms is acceptable for first beta.
+- **Multi-host worker pool / non-colliding subnets** — single-host is fine for first paying customer; capacity-aware scheduling and anti-affinity (don't pack one customer on one host) come with the multi-host work, not before it.
+- **HSM/KMS for the CA key** (AWS KMS / Azure Key Vault HSM-backed signing, or Vault SSH secrets engine) — file mount with tight FS perms is acceptable for first beta. Revisit before going GA or before the first SOC2 conversation; the API's `ssh-keygen -s` shell-out becomes a KMS `Sign` call.
+- **Managed Postgres + secrets manager** — self-hosted Postgres is fine for beta. Move the API DB to RDS / Azure Database for PostgreSQL Flexible Server and secrets to AWS Secrets Manager / Azure Key Vault before customer SLAs apply. W1.6 (env-driven secrets) is the bridge step that makes this a config swap, not a refactor.
 - **Billing/metering** — out of scope per design; W2.6 + a sandbox-lifecycle audit table give you the raw data when you wire it later.
 
 ---
