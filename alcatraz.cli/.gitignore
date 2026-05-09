@@ -486,3 +486,6 @@ $RECYCLE.BIN/
 .containers/*
 # Claude Code local settings
 .claude/settings.local.json
+
+# Published self-contained CLI binary (see scripts/publish.sh)
+dist/

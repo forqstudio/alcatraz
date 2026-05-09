@@ -74,8 +74,10 @@ cd ..
 docker compose up -d
 sudo -E ./alcatraz.worker/bin/alcatraz-worker        # in another terminal
 
-# 2. Build the CLI
-dotnet build alcatraz.cli/Alcatraz.Cli.sln
+# 2. Publish the CLI as a self-contained single-file binary and put it on PATH.
+#    No .NET runtime needed at runtime; output lands in alcatraz.cli/dist/alcatraz.
+alcatraz.cli/scripts/publish.sh
+sudo ln -sf "$(pwd)/alcatraz.cli/dist/alcatraz" /usr/local/bin/alcatraz
 
 # 3. Register a user (one-time, since the local realm starts empty)
 curl -sX POST http://localhost:8080/api/v1/users/register \
@@ -83,13 +85,15 @@ curl -sX POST http://localhost:8080/api/v1/users/register \
   -d '{"email":"demo@alcatraz.local","firstName":"Demo","lastName":"User","password":"demopass"}'
 
 # 4. Sign in
-dotnet run --project alcatraz.cli/src/Alcatraz.Cli -- login
+alcatraz login
 
 # 5. Create + connect. The CLI polls until the worker reports Running,
 #    issues a cert, and execs ssh.
-ID=$(dotnet run --project alcatraz.cli/src/Alcatraz.Cli -- sandbox create --vcpus 2 --memory 2048 --json | jq -r .id)
-dotnet run --project alcatraz.cli/src/Alcatraz.Cli -- ssh "$ID"
+ID=$(alcatraz sandbox create --vcpus 2 --memory 2048 --json | jq -r .id)
+alcatraz ssh "$ID"
 ```
+
+Re-run `alcatraz.cli/scripts/publish.sh` after editing CLI sources to refresh the binary. For tight inner-loop work, `dotnet run --project alcatraz.cli/src/Alcatraz.Cli -- <args>` still works against the same source tree.
 
 A `curl`-only walkthrough (useful for smoke-testing the API in isolation) lives at [`../alcatraz.api/docs/local-end-to-end.md`](../alcatraz.api/docs/local-end-to-end.md).
 

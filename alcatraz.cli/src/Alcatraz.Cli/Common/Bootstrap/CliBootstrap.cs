@@ -10,6 +10,7 @@ using Alcatraz.Cli.Commands.WhoAmI;
 using Alcatraz.Cli.Common.Configuration;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Spectre.Console;
 using Spectre.Console.Cli;
 
 namespace Alcatraz.Cli.Common.Bootstrap;
@@ -18,6 +19,11 @@ public static class CliBootstrap
 {
     public static async Task<int> RunAsync(string[] args)
     {
+        if (args.Length == 0)
+        {
+            PrintBanner();
+        }
+
         var configuration = BuildConfiguration(args);
 
         var services = new ServiceCollection();
@@ -54,6 +60,27 @@ public static class CliBootstrap
         });
 
         return await app.RunAsync(args);
+    }
+
+    private static void PrintBanner()
+    {
+        // Skip when output is redirected — keeps `alcatraz | jq`, CI logs, etc. clean.
+        if (Console.IsOutputRedirected)
+        {
+            return;
+        }
+
+        const string banner =
+            "      _ _           _                  \n" +
+            "     | | |         | |                 \n" +
+            "  __ | | | ___ __ _| |_ _ __ __ _ ____ \n" +
+            " / _`| | |/ __/ _` | __| '__/ _` |_  / \n" +
+            "| (_| | | | (_| (_| | |_| | | (_| |/ /  \n" +
+            " \\__,_|_|_|\\___\\__,_|\\__|_|  \\__,_/___| ";
+
+        AnsiConsole.MarkupLine($"[orange1]{Markup.Escape(banner)}[/]");
+        AnsiConsole.MarkupLine("[grey]  serverless sandboxes, on demand.[/]");
+        AnsiConsole.WriteLine();
     }
 
     private static IConfiguration BuildConfiguration(string[] args)
