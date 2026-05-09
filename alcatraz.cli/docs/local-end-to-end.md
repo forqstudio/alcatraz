@@ -7,7 +7,7 @@ If you want the curl-only walkthrough that exercises the API directly, see [`../
 ## Prerequisites
 
 - Docker + Docker Compose
-- `dotnet` SDK 8
+- `dotnet` SDK 8 (build-time only — the published binary is self-contained)
 - `ssh`, `ssh-keygen`, and `jq` on the host
 - A web browser (one click during device-flow login)
 - KVM, CNI plugins, and a built kernel + rootfs in `alcatraz.core/` for the worker — see [`../../alcatraz.worker/README.md`](../../alcatraz.worker/README.md)
@@ -44,11 +44,16 @@ The worker subscribes to `vm.spawn` and `vm.destroy` and publishes `vm.ready` / 
 
 ## 2. Build the CLI
 
+Publish a self-contained single-file binary and put it on `PATH`. The output has no .NET runtime dependency at runtime.
+
 ```bash
-dotnet build alcatraz.cli/Alcatraz.Cli.sln
+alcatraz.cli/scripts/publish.sh
+sudo ln -sf "$(pwd)/alcatraz.cli/dist/alcatraz" /usr/local/bin/alcatraz
+
+alcatraz --version
 ```
 
-(Or use `dotnet run --project alcatraz.cli/src/Alcatraz.Cli -- <args>` directly — pre-building is not required.)
+Re-run `publish.sh` after editing CLI sources to refresh the binary. The script unlinks the previous file first, so an already-running `alcatraz ssh` session keeps working while you rebuild.
 
 ## 3. Configure (only if defaults don't match)
 
@@ -77,20 +82,19 @@ Register is idempotent: re-running it for an existing email returns the existing
 ## 5. Sign in
 
 ```bash
-dotnet run --project alcatraz.cli/src/Alcatraz.Cli -- login
+alcatraz login
 ```
 
 A panel prints with the `userCode` and a verification URL; the CLI tries to open the browser automatically (use `--no-browser` to skip). Sign in as `demo@alcatraz.local` / `demopass`. The CLI polls the token endpoint and reports `Logged in.`
 
 ```bash
-dotnet run --project alcatraz.cli/src/Alcatraz.Cli -- whoami
+alcatraz whoami
 ```
 
 ## 6. Create a sandbox
 
 ```bash
-ID=$(dotnet run --project alcatraz.cli/src/Alcatraz.Cli -- sandbox create \
-       --vcpus 2 --memory 2048 --json | jq -r .id)
+ID=$(alcatraz sandbox create --vcpus 2 --memory 2048 --json | jq -r .id)
 echo "$ID"
 ```
 
@@ -104,8 +108,8 @@ docker run --rm --network alcatraz_default natsio/nats-box:latest \
 ```
 
 ```bash
-dotnet run --project alcatraz.cli/src/Alcatraz.Cli -- sandbox list
-dotnet run --project alcatraz.cli/src/Alcatraz.Cli -- sandbox get "$ID"
+alcatraz sandbox list
+alcatraz sandbox get "$ID"
 # wait until status reads Running (~10–15s on a warm host)
 ```
 
@@ -113,10 +117,10 @@ dotnet run --project alcatraz.cli/src/Alcatraz.Cli -- sandbox get "$ID"
 
 ```bash
 # Interactive shell
-dotnet run --project alcatraz.cli/src/Alcatraz.Cli -- ssh "$ID"
+alcatraz ssh "$ID"
 
 # One-shot remote command
-dotnet run --project alcatraz.cli/src/Alcatraz.Cli -- ssh "$ID" "whoami; uname -r; hostname"
+alcatraz ssh "$ID" "whoami; uname -r; hostname"
 ```
 
 The CLI re-issues the cert on each `ssh` invocation (cheap; 24h TTL means we never re-prompt for login mid-session) and writes it to `~/.config/alcatraz/certs/<id>-cert.pub`. Inspect it:
@@ -131,13 +135,13 @@ In local dev (no `Gateway:Host` configured on the API), the cert response carrie
 ## 8. Delete
 
 ```bash
-dotnet run --project alcatraz.cli/src/Alcatraz.Cli -- sandbox delete "$ID"
+alcatraz sandbox delete "$ID"
 ```
 
 Status transitions: `Running` → `Deleting` immediately (API publishes `vm.destroy`), then `Deleted` once the worker has stopped Firecracker, CNI has torn down the bridge, and the worker has published `vm.destroyed` (~5–10s end-to-end).
 
 ```bash
-dotnet run --project alcatraz.cli/src/Alcatraz.Cli -- sandbox get "$ID"
+alcatraz sandbox get "$ID"
 # expect: status=Deleted
 ```
 
