@@ -14,7 +14,11 @@ PI_PACKAGE="${PI_PACKAGE:-@mariozechner/pi-coding-agent@latest}"
 RUST_TOOLCHAIN="${RUST_TOOLCHAIN:-stable}"
 EXTRA_APT_PACKAGES="${EXTRA_APT_PACKAGES:-}"
 EXTRA_NPM_PACKAGES="${EXTRA_NPM_PACKAGES:-}"
-HOST_SSH_DIR="${HOST_SSH_DIR:-${HOME}/.ssh}"
+# Note: the rootfs is intentionally cert-only at build time. No host SSH
+# pubkeys are baked in — that would put the developer's key in every customer
+# VM and bypass the per-sandbox cert pipeline. The dev-only `run.sh` /
+# `firecracker.sh` path injects authorized_keys into the per-VM AgentFS
+# overlay at boot, scoped to that one VM.
 
 BASE_APT_PACKAGES=(
     apt-utils
@@ -76,6 +80,7 @@ BASE_APT_PACKAGES=(
     python3-wheel
     ripgrep
     rsync
+    tini
     shellcheck
     sqlite3
     strace
@@ -262,12 +267,11 @@ sudo chmod 0644 "${ROOTFS_DIR}/etc/ssh/auth_principals/${VM_USER}"
 sudo touch "${ROOTFS_DIR}/etc/ssh/trusted_user_ca_keys"
 sudo chmod 0644 "${ROOTFS_DIR}/etc/ssh/trusted_user_ca_keys"
 chroot_run "ssh-keygen -A"
-sudo mkdir -p "${ROOTFS_DIR}/home/${VM_USER}/.ssh"
-if compgen -G "${HOST_SSH_DIR}/*.pub" >/dev/null 2>&1; then
-    cat "${HOST_SSH_DIR}"/*.pub | sudo tee "${ROOTFS_DIR}/home/${VM_USER}/.ssh/authorized_keys" >/dev/null
-    sudo chmod 0600 "${ROOTFS_DIR}/home/${VM_USER}/.ssh/authorized_keys"
-fi
-sudo chmod 0700 "${ROOTFS_DIR}/home/${VM_USER}/.ssh"
+# .ssh dir is created with correct perms here so the guest can write into it
+# at boot (e.g. firecracker.sh plants authorized_keys into the per-VM overlay
+# at this exact path). authorized_keys is intentionally NOT planted here —
+# see the comment near the top of this file.
+sudo install -d -m 0700 -o "${VM_UID}" -g "${VM_GID}" "${ROOTFS_DIR}/home/${VM_USER}/.ssh"
 
 log "Writing guest configuration files"
 sudo tee "${ROOTFS_DIR}/etc/hostname" >/dev/null <<EOF
@@ -359,37 +363,21 @@ install -d -m 0700 /run/ssh-hostkeys
 [ -f /run/ssh-hostkeys/ssh_host_rsa_key ] || ssh-keygen -q -N '' -t rsa -f /run/ssh-hostkeys/ssh_host_rsa_key
 [ -f /run/ssh-hostkeys/ssh_host_ecdsa_key ] || ssh-keygen -q -N '' -t ecdsa -f /run/ssh-hostkeys/ssh_host_ecdsa_key
 [ -f /run/ssh-hostkeys/ssh_host_ed25519_key ] || ssh-keygen -q -N '' -t ed25519 -f /run/ssh-hostkeys/ssh_host_ed25519_key
-if ! /usr/sbin/sshd \
-    -o HostKey=/run/ssh-hostkeys/ssh_host_rsa_key \
-    -o HostKey=/run/ssh-hostkeys/ssh_host_ecdsa_key \
-    -o HostKey=/run/ssh-hostkeys/ssh_host_ed25519_key; then
-    echo "Warning: sshd failed to start" >&2
-fi
 
 cat /etc/motd
 echo
 
-if id -u "${VM_USER}" >/dev/null 2>&1; then
-    export HOME="/home/${VM_USER}"
-    export USER="${VM_USER}"
-    export LOGNAME="${VM_USER}"
-    export SHELL="/bin/bash"
-    if [ -d /workspace ]; then
-        cd /workspace
-    elif [ -d "/home/${VM_USER}" ]; then
-        cd "/home/${VM_USER}"
-    fi
-    if /usr/bin/setsid --ctty /usr/bin/setpriv \
-        --reuid "${VM_UID}" \
-        --regid "${VM_GID}" \
-        --init-groups \
-        /bin/bash -l; then
-        exit 0
-    fi
-    echo "Warning: failed to switch to ${VM_USER}, falling back to root shell" >&2
-fi
-
-exec /usr/bin/setsid --ctty /bin/bash -l
+# tini is PID 1: forwards signals (SIGTERM from the host shuts the VM down
+# cleanly) and reaps zombies (orphaned grandchildren of customer SSH sessions
+# don't accumulate). sshd runs in the foreground (-D) so its lifetime is the
+# VM's lifetime — if sshd ever exits, tini exits with its code, the kernel
+# panics (panic=1 reboot=k), and the worker observes vm.exit and publishes
+# vm.destroyed. Customer access is via SSH; the serial console is not
+# user-facing, so PID 1 owns sshd directly rather than spawning a shell.
+exec /usr/bin/tini -- /usr/sbin/sshd -D \
+    -o HostKey=/run/ssh-hostkeys/ssh_host_rsa_key \
+    -o HostKey=/run/ssh-hostkeys/ssh_host_ecdsa_key \
+    -o HostKey=/run/ssh-hostkeys/ssh_host_ed25519_key
 EOF
 
 sudo chmod +x "${ROOTFS_DIR}/init"

@@ -17,7 +17,7 @@ This repository contains the build and launch scripts only. Generated artifacts 
 
 ## How It Works
 
-1. Worker subscribes to NATS `vm.spawn` subject with queue group for load balancing
+1. Worker subscribes to NATS `vm.spawn` (queue group `worker-vm-spawn`, for load balancing) and `vm.destroy` (queue group `worker-vm-destroy`). Queue groups follow the `<consumer>-<subject>` convention also used by the API (`api-vm-ready`, `api-vm-destroyed`).
 2. On VM request, worker allocates an available slot
 3. Worker configures `CNIConfiguration` for the Firecracker SDK; on VM start, the SDK invokes CNI plugins (bridge, host-local IPAM, tc-redirect-tap) which handle TAP creation, IP allocation, and NAT automatically
 4. Worker initializes or reuses an AgentFS overlay in `.agentfs/<agent-id>.db` via the AgentFS Go SDK (no subprocess)
@@ -29,7 +29,7 @@ This repository contains the build and launch scripts only. Generated artifacts 
 6. Worker starts an in-process NFSv3 server bound to the bridge gateway IP, exporting the overlay (host rootfs as read-only base layer + per-VM SQLite delta)
 7. Worker spawns Firecracker VM with `root=/dev/nfs` pointing to that NFS export
 8. After Firecracker reports started, worker probes `vm_ip:22` until sshd accepts (10s timeout) and publishes `vm.ready` on NATS with `{id, host, port}`. `alcatraz.api` consumes this event and transitions the sandbox to `Running`; `alcatraz.routes` (when present) updates Traefik's route table.
-9. On VM exit, the SDK's `doCleanup()` invokes CNI DEL to release TAP, IP, and namespace; worker shuts down the NFS server goroutine, releases the slot, and publishes `vm.destroyed` so consumers can drop the route.
+9. On `vm.destroy`, worker calls `StopVMM` on the matching Firecracker process. Firecracker forwards the signal to the guest's PID 1 (`tini`, see [`alcatraz.core/README.md`](../alcatraz.core/README.md)) which propagates `SIGTERM` to `sshd` for a clean shutdown. On VM exit (whether triggered by a `vm.destroy` request or an unexpected crash), the SDK's `doCleanup()` invokes CNI DEL to release TAP, IP, and namespace; worker shuts down the NFS server goroutine, releases the slot, and publishes `vm.destroyed`. `alcatraz.api` consumes that and transitions the sandbox to `Deleted` (if it was `Deleting`) or `Failed` (if it was `Running` / `Provisioning`); `alcatraz.routes` (when present) drops the route.
 
 The practical effect is:
 - VMs can be spawned on-demand via NATS messages
@@ -48,12 +48,11 @@ You need these on the host:
 - NATS server running
 - CNI plugins installed at `/opt/cni/bin` (bridge, host-local, tc-redirect-tap)
 - CNI conflist installed at `/etc/cni/net.d/alcatraz-bridge.conflist`
-- The API's SSH CA pubkey readable at `WORKER_CA_PUBKEY_PATH` (default `/run/alcatraz-ca/alcatraz_ca.pub`). With the repo-root compose stack, copy it out of the shared volume:
+- The API's SSH CA pubkey readable at `WORKER_CA_PUBKEY_PATH` (default `/run/alcatraz-ca/alcatraz_ca.pub`). With the repo-root compose stack up, run:
   ```bash
-  sudo install -d -m 0755 /run/alcatraz-ca
-  docker run --rm -v alcatraz_ca:/ca alpine cat /ca/alcatraz_ca.pub \
-    | sudo tee /run/alcatraz-ca/alcatraz_ca.pub > /dev/null
+  alcatraz.worker/scripts/sync-ca-pubkey.sh
   ```
+  The script copies the pubkey out of the `alcatraz_ca` docker volume. `/run` is tmpfs, so re-run this after every host reboot. The worker fails fast at startup if the file isn't readable.
 
 The AgentFS overlay and NFS server run in-process inside the worker — no separate `agentfs` daemon or CLI binary needs to be installed.
 
@@ -164,9 +163,11 @@ if present — a missing `.env` is not an error). VM-side defaults live in
 |---|---|---|
 | `NATS_URL` | `nats://localhost:4222` | NATS server URL |
 | `NATS_SUBJECT` | `vm.spawn` | Subject the worker subscribes to |
-| `NATS_QUEUE_GROUP` | `vm-workers` | NATS queue group for load balancing |
+| `NATS_QUEUE_GROUP` | `worker-vm-spawn` | NATS queue group for `vm.spawn` consumers (load balancing across workers) |
 | `NATS_READY_SUBJECT` | `vm.ready` | Subject the worker publishes to after sshd is reachable |
 | `NATS_DESTROYED_SUBJECT` | `vm.destroyed` | Subject the worker publishes to after VM exit + cleanup |
+| `NATS_DESTROY_SUBJECT` | `vm.destroy` | Subject the worker subscribes to for delete requests from the API |
+| `NATS_DESTROY_QUEUE_GROUP` | `worker-vm-destroy` | NATS queue group for `vm.destroy` consumers |
 | `WORKER_CA_PUBKEY_PATH` | `/run/alcatraz-ca/alcatraz_ca.pub` | API's SSH CA pubkey, planted into each VM's overlay |
 | `SEQ_URL` | _(empty)_ | If set, ship CLEF events to Seq at this URL |
 | `SEQ_API_KEY` | _(empty)_ | Optional Seq API key |

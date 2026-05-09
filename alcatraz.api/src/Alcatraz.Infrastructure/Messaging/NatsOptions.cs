@@ -11,4 +11,8 @@ public sealed class NatsOptions
     public string ReadySubject { get; set; } = "vm.ready";
 
     public string ReadyQueueGroup { get; set; } = "api-vm-ready";
+
+    public string DestroyedSubject { get; set; } = "vm.destroyed";
+
+    public string DestroyedQueueGroup { get; set; } = "api-vm-destroyed";
 }

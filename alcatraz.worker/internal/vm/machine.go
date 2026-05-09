@@ -206,6 +206,22 @@ func (s *VirtualMachineService) ListVirtualMachines() []*VirtualMachine {
 	return instances
 }
 
+// Destroy asks Firecracker to stop the VM with the given id. The post-exit
+// cleanup goroutine wired up in Spawn handles CNI DEL, slot release, and the
+// vm.destroyed publish — Destroy only needs to issue StopVMM. Returns nil for
+// an unknown id (idempotent: at-least-once vm.destroy delivery may double-fire).
+func (s *VirtualMachineService) Destroy(id string) error {
+	instance := s.GetVirtualMachine(id)
+	if instance == nil {
+		return nil
+	}
+	machine := instance.GetMachine()
+	if machine == nil {
+		return nil
+	}
+	return machine.StopVMM()
+}
+
 // Shutdown stops every running VM and waits for the per-VM cleanup goroutines
 // (which run the SDK's CNI DEL via doCleanup) to finish, so IPAM leases and TAP
 // devices are released before the worker exits. Bounded by ctx — if it expires,

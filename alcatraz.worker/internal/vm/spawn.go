@@ -179,7 +179,7 @@ func Spawn(
 	for _, iface := range m.Cfg.NetworkInterfaces {
 		if iface.StaticConfiguration != nil && iface.StaticConfiguration.IPConfiguration != nil {
 			ipConf := iface.StaticConfiguration.IPConfiguration
-			instance.SetVMIP(ipConf.IPAddr.String())
+			instance.SetVMIP(ipConf.IPAddr.IP.String())
 			instance.SetHostTapIP(ipConf.Gateway.String())
 			break
 		}

@@ -25,6 +25,17 @@ internal sealed class RegisterUserCommandHandler(
             request.Password,
             cancellationToken);
 
+        // Register is idempotent at the IDP layer (Keycloak 409 → existing
+        // identity). Mirror that here: if the local table already has a row
+        // for this identity, return it instead of inserting a duplicate.
+        // Covers the orphan case where Keycloak has the user but the local
+        // row was lost (e.g. DB volume wiped while Keycloak's wasn't).
+        var existing = await userRepository.GetByIdentityIdAsync(identityId, cancellationToken);
+        if (existing is not null)
+        {
+            return existing.Id;
+        }
+
         user.SetIdentityId(identityId);
 
         userRepository.Add(user);

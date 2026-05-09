@@ -4,11 +4,16 @@ namespace Alcatraz.Infrastructure.Authentication.Models;
 
 public sealed class UserRepresentationModel
 {
-    public Dictionary<string, string> Access { get; set; }
+    // Keycloak's user representation returns Access as a string→bool map
+    // (e.g. {"manageGroupMembership": true, "view": true, ...}) — typing this
+    // as Dictionary<string, string> previously caused System.Text.Json to
+    // throw on every admin GET /users response.
+    public Dictionary<string, bool> Access { get; set; }
 
     public Dictionary<string, List<string>> Attributes { get; set; }
 
-    public Dictionary<string, string> ClientRoles { get; set; }
+    // ClientRoles is a string→[string] map (client-id → role names).
+    public Dictionary<string, List<string>> ClientRoles { get; set; }
 
     public long? CreatedTimestamp { get; set; }
 

@@ -27,6 +27,19 @@ NFS_PORT="${NFS_PORT:-11111}"
 HOST_LOOPBACK_PORTS="${HOST_LOOPBACK_PORTS:-8000:8010}"
 
 VM_HOSTNAME="${VM_HOSTNAME:-alcatraz}"
+
+# Dev-only: where to look for host pubkeys to plant into the guest's
+# authorized_keys at boot. Defaults to the invoking user's ~/.ssh — we explicitly
+# resolve SUDO_USER's home rather than $HOME so `sudo ./run.sh` (no -E) works
+# the same as `sudo -E ./run.sh`. Set HOST_SSH_DIR= (empty) to skip planting
+# and force cert-only access for this VM.
+if [ -z "${HOST_SSH_DIR+x}" ]; then
+    if [ -n "${SUDO_USER:-}" ]; then
+        HOST_SSH_DIR="$(getent passwd "${SUDO_USER}" | cut -d: -f6)/.ssh"
+    else
+        HOST_SSH_DIR="${HOME}/.ssh"
+    fi
+fi
 VM_VCPUS="${VM_VCPUS:-4}"
 VM_MEM_MIB="${VM_MEM_MIB:-8192}"
 FIRECRACKER_LOG_LEVEL="${FIRECRACKER_LOG_LEVEL:-Error}"
@@ -149,6 +162,29 @@ prepare_agentfs_overlay() {
     if [ -n "${current_stamp}" ]; then
         printf '%s\n' "${current_stamp}" > "${BASE_STAMP_PATH}"
     fi
+}
+
+plant_dev_authorized_keys() {
+    # Inject the developer's host pubkeys into THIS VM's overlay only. The
+    # base rootfs intentionally has no authorized_keys (so customer VMs
+    # spawned by alcatraz.worker stay cert-only); this is a dev-convenience
+    # path for the bare run.sh / firecracker.sh single-VM flow.
+    if [ -z "${HOST_SSH_DIR}" ]; then
+        log "HOST_SSH_DIR is empty — skipping dev authorized_keys plant (cert-only)"
+        return
+    fi
+    if ! compgen -G "${HOST_SSH_DIR}/*.pub" >/dev/null 2>&1; then
+        warn "No *.pub files in ${HOST_SSH_DIR}; skipping authorized_keys plant. Pass HOST_SSH_DIR=/path or run via 'sudo -E'."
+        return
+    fi
+
+    local keys
+    keys="$(cat "${HOST_SSH_DIR}"/*.pub)"
+    log "Planting authorized_keys for dev VM ${AGENT_ID} from ${HOST_SSH_DIR}"
+    (
+        cd "${SCRIPT_DIR}"
+        "${AGENTFS_BIN}" fs "${AGENT_ID}" write /home/al/.ssh/authorized_keys "${keys}" >/dev/null
+    )
 }
 
 setup_tap() {
@@ -281,6 +317,7 @@ resolve_firecracker_bin
 resolve_agentfs_bin
 ensure_requirements
 prepare_agentfs_overlay
+plant_dev_authorized_keys
 setup_tap
 setup_nat
 stop_stale_agentfs_nfs

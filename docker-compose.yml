@@ -58,10 +58,17 @@ services:
       - KEYCLOAK_ADMIN_PASSWORD=admin
       # Make device-flow verification URLs host-reachable. Without this,
       # Keycloak emits http://alcatraz-idp:8080/... which only resolves
-      # inside the docker network.
-      - KC_HOSTNAME_URL=http://localhost:8082
+      # inside the docker network. Keycloak 25 replaced KC_HOSTNAME_URL with
+      # KC_HOSTNAME (which accepts a full URL).
+      - KC_HOSTNAME=http://localhost:8082
       - KC_HOSTNAME_STRICT=false
       - KC_HOSTNAME_STRICT_BACKCHANNEL=false
+      # Front-channel (browser) URLs must use http://localhost:8082 so device-flow
+      # links resolve from the host. Back-channel (API → Keycloak inside docker)
+      # must keep using http://alcatraz-idp:8080 so the discovery doc's jwks_uri
+      # is reachable. This flag lets backend requests use whatever Host header
+      # they sent (alcatraz-idp:8080) instead of being rewritten to localhost:8082.
+      - KC_HOSTNAME_BACKCHANNEL_DYNAMIC=true
     volumes:
       - keycloak_data:/opt/keycloak/data
       - ./alcatraz.api/.files/alcatraz-realm-export.json:/opt/keycloak/data/import/realm.json
@@ -161,5 +168,6 @@ services:
 volumes:
   keycloak_data:
   alcatraz_ca:
+    name: alcatraz_ca
   traefik_dynamic:
   traefik_acme:

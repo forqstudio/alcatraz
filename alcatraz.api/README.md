@@ -52,7 +52,7 @@ This API never holds a customer's SSH private key, never sees raw Keycloak crede
 | GET  | `/api/v1/sandboxes/{id}` | bearer | Owner-scoped lookup (404 on miss *or* not-yours) |
 | DELETE | `/api/v1/sandboxes/{id}` | bearer | Mark deleting (publishes to `vm.destroy`) |
 | POST | `/api/v1/sandboxes/{id}/ssh-cert` | bearer | Sign a short-lived user cert for the caller's pubkey |
-| POST | `/api/v1/users/register`, `/api/v1/users/login` | anon | User registration + password-grant login (bootstrap path; CLI uses device flow instead) |
+| POST | `/api/v1/users/register`, `/api/v1/users/login` | anon | User registration + password-grant login (bootstrap path; CLI uses device flow instead). Register is **idempotent** — a duplicate email returns the existing user id, and a missing local DB row is reconciled against the existing Keycloak identity. |
 
 For the design rationale and the full request lifecycle, see [`docs/customer-cli-and-sandboxes.md`](docs/customer-cli-and-sandboxes.md).
 
@@ -80,7 +80,7 @@ For the design rationale and the full request lifecycle, see [`docs/customer-cli
 | Data | PostgreSQL via EF Core, Dapper for read-heavy queries |
 | Cache | Redis (StackExchange.Redis) |
 | Identity | Keycloak (JWT Bearer + OAuth 2.0 device flow) |
-| Messaging | NATS.Net (publishes `vm.spawn`, `vm.destroy`; consumes `vm.ready` via a `BackgroundService`) |
+| Messaging | NATS.Net (publishes `vm.spawn`, `vm.destroy`; consumes `vm.ready` and `vm.destroyed` via `BackgroundService`s) |
 | CQRS / mediator | MediatR |
 | Validation | FluentValidation |
 | Background jobs | Quartz.NET (outbox drain) |

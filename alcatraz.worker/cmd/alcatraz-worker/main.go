@@ -32,6 +32,18 @@ func main() {
 		caPubkeyPath = defaultCAPubkeyPath
 	}
 
+	// Fail fast at startup rather than on first spawn. /run is tmpfs, so the
+	// pubkey disappears across host reboots; without this check, sandboxes
+	// silently get stuck in Provisioning.
+	if _, err := os.ReadFile(caPubkeyPath); err != nil {
+		logging.Fatal(
+			"CA pubkey not readable — run alcatraz.worker/scripts/sync-ca-pubkey.sh "+
+				"(/run is tmpfs and is wiped on host reboot)",
+			"path", caPubkeyPath,
+			"err", err,
+		)
+	}
+
 	slog.Info("Worker starting",
 		"firecracker", vmConfig.FirecrackerBin,
 		"rootfs", vmConfig.Rootfs,
@@ -87,10 +99,36 @@ func main() {
 		logging.Fatal("Failed to start subscriber", "err", err)
 	}
 
+	// Second subscription: the API publishes vm.destroy when a sandbox is
+	// deleted; we StopVMM the matching firecracker process. The post-exit
+	// cleanup goroutine in Spawn then publishes vm.destroyed.
+	destroyHandler := func(data []byte) error {
+		var req struct {
+			ID string `json:"id"`
+		}
+		if err := json.Unmarshal(data, &req); err != nil {
+			return fmt.Errorf("parse destroy request: %w", err)
+		}
+		if req.ID == "" {
+			return fmt.Errorf("destroy request missing id")
+		}
+		slog.Info("Received destroy request", "id", req.ID)
+		return mgr.Destroy(req.ID)
+	}
+
+	destroySubscriber, err := messaging.NewSubscriber(natsConfig.URL, natsConfig.DestroySubject, natsConfig.DestroyQueueGroup, destroyHandler)
+	if err != nil {
+		logging.Fatal("Failed to create destroy subscriber", "err", err)
+	}
+	if err := destroySubscriber.Start(); err != nil {
+		logging.Fatal("Failed to start destroy subscriber", "err", err)
+	}
+
 	slog.Info("Alcatraz Worker started",
 		"nats_url", subscriber.URL(),
 		"ready_subject", natsConfig.ReadySubject,
 		"destroyed_subject", natsConfig.DestroyedSubject,
+		"destroy_subject", natsConfig.DestroySubject,
 	)
 
 	sigCh := make(chan os.Signal, 1)
@@ -100,6 +138,9 @@ func main() {
 	slog.Info("Shutting down")
 	if err := subscriber.Stop(); err != nil {
 		slog.Error("Subscriber shutdown error", "err", err)
+	}
+	if err := destroySubscriber.Stop(); err != nil {
+		slog.Error("Destroy subscriber shutdown error", "err", err)
 	}
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 20*time.Second)

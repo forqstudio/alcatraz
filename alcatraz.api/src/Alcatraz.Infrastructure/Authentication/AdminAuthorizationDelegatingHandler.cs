@@ -6,6 +6,18 @@ using Microsoft.Extensions.Options;
 
 namespace Alcatraz.Infrastructure.Authentication;
 
+/// <summary>
+/// Acquires a Keycloak admin client_credentials token and attaches it as the
+/// Authorization header on outbound requests. Scope is intentionally narrow:
+/// it adds the bearer header and forwards the response untouched.
+///
+/// **Status checking is the caller's responsibility.** This handler does not
+/// throw on non-2xx because some callers (e.g. idempotent register, which
+/// treats 409 Conflict as a normal "user already exists" branch) need to
+/// inspect the status code themselves. Callers must call
+/// <c>EnsureSuccessStatusCode()</c>, check <c>IsSuccessStatusCode</c>, or
+/// otherwise handle every status they don't explicitly accept.
+/// </summary>
 public sealed class AdminAuthorizationDelegatingHandler(IOptions<KeycloakOptions> keycloakOptions) : DelegatingHandler
 {
     private readonly KeycloakOptions keycloakOptions = keycloakOptions.Value;
@@ -20,11 +32,7 @@ public sealed class AdminAuthorizationDelegatingHandler(IOptions<KeycloakOptions
             JwtBearerDefaults.AuthenticationScheme,
             authorizationToken.AccessToken);
 
-        var httpResponseMessage = await base.SendAsync(request, cancellationToken);
-
-        httpResponseMessage.EnsureSuccessStatusCode();
-
-        return httpResponseMessage;
+        return await base.SendAsync(request, cancellationToken);
     }
 
     private async Task<AuthorizationToken> GetAuthorizationToken(CancellationToken cancellationToken)

@@ -233,19 +233,17 @@ What's running by default:
 
 ### Start the worker
 
-The worker is host-run. From the repo root, copy the CA pubkey out of the shared compose volume so the worker can plant it into each VM's overlay:
+The worker is host-run. From the repo root, sync the CA pubkey out of the shared compose volume so the worker can plant it into each VM's overlay. `/run` is tmpfs, so re-run this after every host reboot — the worker fails fast at startup if the file is missing.
 
 ```bash
-sudo install -d -m 0755 /run/alcatraz-ca
-docker run --rm -v alcatraz_ca:/ca alpine cat /ca/alcatraz_ca.pub \
-  | sudo tee /run/alcatraz-ca/alcatraz_ca.pub > /dev/null
+alcatraz.worker/scripts/sync-ca-pubkey.sh
 
 cd alcatraz.worker
 make build
 sudo -E ./bin/alcatraz-worker
 ```
 
-The worker subscribes to `vm.spawn` and starts publishing `vm.ready` / `vm.destroyed` as it boots and tears down VMs.
+The worker subscribes to `vm.spawn` and `vm.destroy`, and publishes `vm.ready` / `vm.destroyed` as it boots and tears down VMs.
 
 ### End-to-end walkthrough (local, direct-to-VM)
 

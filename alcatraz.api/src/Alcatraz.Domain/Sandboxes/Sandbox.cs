@@ -94,6 +94,33 @@ public sealed class Sandbox : Entity
         return Result.Success();
     }
 
+    public Result MarkDestroyed(DateTime utcNow)
+    {
+        // Worker fires vm.destroyed both when we asked it to (Deleting) and
+        // when the VM exited unexpectedly (Provisioning / Running). Map the
+        // first to Deleted, the rest to Failed. Already-terminal states are
+        // idempotent so at-least-once delivery doesn't bounce.
+        switch (Status)
+        {
+            case SandboxStatus.Deleted:
+            case SandboxStatus.Failed:
+                return Result.Success();
+
+            case SandboxStatus.Deleting:
+                Status = SandboxStatus.Deleted;
+                DeletedOnUtc ??= utcNow;
+                return Result.Success();
+
+            case SandboxStatus.Provisioning:
+            case SandboxStatus.Running:
+                Status = SandboxStatus.Failed;
+                return Result.Success();
+
+            default:
+                return Result.Failure(SandboxErrors.NotFound);
+        }
+    }
+
     public Result EnsureOwnedBy(Guid userId) =>
         OwnerUserId == userId
             ? Result.Success()

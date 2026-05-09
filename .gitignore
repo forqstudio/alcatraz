@@ -10,3 +10,4 @@ alcatraz.worker/bin/
 
 .DS_Store
 *.log
+wget-log*

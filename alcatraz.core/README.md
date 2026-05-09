@@ -34,7 +34,9 @@ You need these on the host:
 - `agentfs` installed on the host and available on `PATH`
 - package install permissions for `apt`, `debootstrap`, TAP setup, and `iptables`
 
-`build-rootfs.sh`, `build-kernel.sh`, and `firecracker.sh` all require `sudo`.
+`build-rootfs.sh`, `build-kernel.sh`, and `firecracker.sh` all require `sudo`. Always run them via `sudo -E` to preserve `$HOME`.
+
+The base rootfs is intentionally cert-only — no host SSH pubkeys are baked in at build time, so customer VMs spawned by `alcatraz.worker` get only the per-sandbox cert pipeline (`TrustedUserCAKeys` + `AuthorizedPrincipalsFile`). The dev-convenience `run.sh` / `firecracker.sh` path injects `authorized_keys` into the per-VM AgentFS overlay at boot (scoped to that one VM, never on disk in the shared rootfs). Set `HOST_SSH_DIR=` (empty) on a `firecracker.sh` invocation to opt out and use cert-only auth even for dev VMs.
 
 The launcher expects:
 - host uplink interface detectable from `ip route show default`
@@ -52,7 +54,8 @@ Guest-side:
 - Ubuntu userspace
 - developer tools
 - `/workspace`
-- `sshd` configured for cert-based auth: `TrustedUserCAKeys /etc/ssh/trusted_user_ca_keys` + `AuthorizedPrincipalsFile /etc/ssh/auth_principals/%u`. Both files exist as empty stubs in the base rootfs; `alcatraz.worker` plants the per-sandbox values into the AgentFS overlay before VM boot. Password auth is disabled.
+- `/init` runs `exec /usr/bin/tini -- /usr/sbin/sshd -D ...` after mounts and host-key generation. `tini` is PID 1 — it forwards signals (so the worker's `StopVMM` shuts the VM down cleanly via `SIGTERM`) and reaps zombies (orphaned grandchildren of customer SSH sessions don't accumulate). `sshd` runs in the foreground; if it ever exits, `tini` exits with its code, the kernel panics (`panic=1 reboot=k`), and the worker observes the exit and publishes `vm.destroyed`. The serial console is not user-facing — customer access is exclusively via SSH.
+- `sshd` configured for cert-based auth: `TrustedUserCAKeys /etc/ssh/trusted_user_ca_keys` + `AuthorizedPrincipalsFile /etc/ssh/auth_principals/%u`. Both files exist as empty stubs in the base rootfs; `alcatraz.worker` plants the per-sandbox values into the AgentFS overlay before VM boot. Password auth is disabled. The base rootfs has **no `authorized_keys`** — customer VMs are exclusively cert-authenticated. The dev `firecracker.sh` path plants `authorized_keys` into the per-dev-VM AgentFS overlay only.
 - outbound access to GitHub, npm, and Ubuntu mirrors through host NAT
 
 ## Guest Defaults
@@ -196,7 +199,7 @@ Single command for first-time setup and launch:
 ```bash
 cd /home/dev/Workspace/firecracker-agentfs
 chmod +x alcatraz.core/run.sh alcatraz.core/build-kernel.sh alcatraz.core/build-rootfs.sh alcatraz.core/firecracker.sh
-./alcatraz.core/run.sh
+sudo -E ./alcatraz.core/run.sh
 ```
 
 `run.sh`:
@@ -207,13 +210,13 @@ chmod +x alcatraz.core/run.sh alcatraz.core/build-kernel.sh alcatraz.core/build-
 After kernel config changes, force a kernel rebuild:
 
 ```bash
-./alcatraz.core/run.sh --build-kernel
+sudo -E ./alcatraz.core/run.sh --build-kernel
 ```
 
 After rootfs changes like SSH setup, force a rootfs rebuild too:
 
 ```bash
-RESET_AGENTFS=1 ./alcatraz.core/run.sh --build-all my-agent
+RESET_AGENTFS=1 sudo -E ./alcatraz.core/run.sh --build-all my-agent
 ```
 
 If you want the explicit manual steps instead:
@@ -221,19 +224,19 @@ If you want the explicit manual steps instead:
 ```bash
 cd /home/dev/Workspace/firecracker-agentfs
 chmod +x alcatraz.core/build-kernel.sh alcatraz.core/build-rootfs.sh alcatraz.core/firecracker.sh
-./alcatraz.core/build-kernel.sh
-./alcatraz.core/build-rootfs.sh
+sudo -E ./alcatraz.core/build-kernel.sh
+sudo -E ./alcatraz.core/build-rootfs.sh
 ```
 
 What those scripts do:
 - `build-kernel.sh` installs host build deps with `apt`, clones the Amazon Linux kernel, enables Firecracker/NFS/dev-friendly kernel options, and builds `vmlinux`
 - if `linux-amazon/` already exists and is clean, `build-kernel.sh` will switch it to the requested `KERNEL_TAG` automatically
-- `build-rootfs.sh` installs host-side bootstrap deps, recreates `alcatraz.core/rootfs`, bootstraps Ubuntu `noble`, installs guest packages, Rust, Python tools, Pi, and guest AgentFS, then writes `/init` and guest profile files
+- `build-rootfs.sh` installs host-side bootstrap deps, recreates `alcatraz.core/rootfs`, bootstraps Ubuntu `noble`, installs guest packages (including `tini` for PID 1 supervision), Rust, Python tools, Pi, and guest AgentFS, then writes `/init` (`exec tini -- sshd -D`) and guest profile files
 
 ## Run
 
 ```bash
-./alcatraz.core/run.sh
+sudo -E ./alcatraz.core/run.sh
 ```
 
 or directly:
@@ -245,7 +248,7 @@ or directly:
 Use a custom AgentFS overlay id:
 
 ```bash
-./alcatraz.core/run.sh my-agent
+sudo -E ./alcatraz.core/run.sh my-agent
 ```
 
 or:
@@ -257,7 +260,7 @@ or:
 If the base rootfs changed and you want to recreate the overlay for an existing id:
 
 ```bash
-RESET_AGENTFS=1 ./alcatraz.core/run.sh my-agent
+RESET_AGENTFS=1 sudo -E ./alcatraz.core/run.sh my-agent
 ```
 
 or:
@@ -289,8 +292,8 @@ curl http://172.16.0.1:8010
 To change or disable that forwarding:
 
 ```bash
-HOST_LOOPBACK_PORTS=3000,5173 ./alcatraz.core/run.sh
-HOST_LOOPBACK_PORTS= ./alcatraz.core/run.sh
+HOST_LOOPBACK_PORTS=3000,5173 sudo -E ./alcatraz.core/run.sh
+HOST_LOOPBACK_PORTS= sudo -E ./alcatraz.core/run.sh
 ```
 
 ## Persistence Model
@@ -319,9 +322,9 @@ The launcher hashes `alcatraz.core/rootfs/etc/alcatraz-release` and refuses to s
 Build-time:
 
 ```bash
-./alcatraz.core/run.sh --build-all
-./alcatraz.core/run.sh --build-rootfs
-RESET_AGENTFS=1 ./alcatraz.core/run.sh --build-rootfs my-agent
+sudo -E ./alcatraz.core/run.sh --build-all
+sudo -E ./alcatraz.core/run.sh --build-rootfs
+RESET_AGENTFS=1 sudo -E ./alcatraz.core/run.sh --build-rootfs my-agent
 NODE_MAJOR=20 ./alcatraz.core/build-rootfs.sh
 RUST_TOOLCHAIN=stable ./alcatraz.core/build-rootfs.sh
 VM_USER=dev VM_USER_PASSWORD=dev VM_HOSTNAME=alcatraz ./alcatraz.core/build-rootfs.sh

@@ -92,6 +92,8 @@ public static class DependencyInjection
         services.AddSingleton<ISshCertificateAuthority, SshKeygenCertificateAuthority>();
 
         services.AddHostedService<VmReadyConsumer>();
+
+        services.AddHostedService<VmDestroyedConsumer>();
     }
 
     private static void AddPersistence(IServiceCollection services, IConfiguration configuration)

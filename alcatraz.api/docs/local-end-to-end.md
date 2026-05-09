@@ -1,6 +1,9 @@
-# Local End-to-End Demo
+# Local End-to-End — API wire protocol reference (curl)
 
-This walks through the entire customer flow against a local `docker compose` stack — **device-flow login → create sandbox → worker boots VM → fetch SSH cert → SSH into the sandbox** — using `curl` and stock `ssh` so each step is verifiable without CLI code. The CLI does the same thing with friendlier UX; see [`../../alcatraz.cli/README.md`](../../alcatraz.cli/README.md).
+> **The canonical end-to-end demo runs through `alcatraz.cli` — see [`../../alcatraz.cli/docs/local-end-to-end.md`](../../alcatraz.cli/docs/local-end-to-end.md).**
+> This document keeps a `curl`-and-stock-`ssh` walkthrough of the same flow for anyone who needs to study the wire contract (device flow, register reconciliation, cert response shape) without going through the CLI.
+
+It walks through the entire customer flow against a local `docker compose` stack — **device-flow login → create sandbox → worker boots VM → fetch SSH cert → SSH into the sandbox** — using `curl` and stock `ssh` so each HTTP request is verifiable on its own.
 
 For an even simpler smoke test that doesn't need a worker, the `--profile demo-sshd` Alpine container still exists. See "Cert pipeline only (no worker)" at the bottom.
 
@@ -15,7 +18,7 @@ For an even simpler smoke test that doesn't need a worker, the `--profile demo-s
 
 | Service | Purpose |
 |---|---|
-| `alcatraz.api` | Our API on `:8080`. Subscribes to `vm.ready` and transitions sandboxes to `Running` |
+| `alcatraz.api` | Our API on `:8080`. Subscribes to `vm.ready` (→ `Running`) and `vm.destroyed` (→ `Deleted` if we asked, otherwise `Failed`) |
 | `alcatraz-db` | Postgres on `:5432` |
 | `alcatraz-idp` | Keycloak on `:8082` (realm export pre-configured with device flow enabled) |
 | `alcatraz-redis` | Redis on `:6379` |
@@ -44,12 +47,10 @@ docker compose logs -f alcatraz.api
 
 ## Bring up the worker
 
-The worker is host-run (it needs KVM and CNI). One-time, copy the API's CA pubkey out of the shared compose volume so the worker can plant it into each VM's overlay:
+The worker is host-run (it needs KVM and CNI). Copy the API's CA pubkey out of the shared compose volume so the worker can plant it into each VM's overlay. `/run` is tmpfs, so re-run this after every host reboot — the worker fails fast at startup if the file is missing.
 
 ```bash
-sudo install -d -m 0755 /run/alcatraz-ca
-docker run --rm -v alcatraz_ca:/ca alpine cat /ca/alcatraz_ca.pub \
-  | sudo tee /run/alcatraz-ca/alcatraz_ca.pub > /dev/null
+alcatraz.worker/scripts/sync-ca-pubkey.sh
 ```
 
 Then build and run:
@@ -73,6 +74,8 @@ curl -sX POST http://localhost:8080/api/v1/users/register \
   -H 'content-type: application/json' \
   -d '{"email":"demo@alcatraz.local","firstName":"Demo","lastName":"User","password":"demopass"}'
 ```
+
+Register is idempotent — re-running it for an existing email returns the existing user id rather than 500ing on Keycloak's 409. If Keycloak has the user but the local DB row is missing (e.g. you wiped the DB volume but not Keycloak's), register reconciles by creating the local row against the existing Keycloak identity.
 
 ### 2. Get an access token
 
