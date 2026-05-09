@@ -2,7 +2,7 @@
 
 ## Overview
 
-ForqStudio implements a **permission-based authorization system** integrated with **Keycloak** as the identity provider. The architecture follows clean architecture principles, separating authentication concerns from authorization logic.
+Alcatraz implements a **permission-based authorization system** integrated with **Keycloak** as the identity provider. The architecture follows clean architecture principles, separating authentication concerns from authorization logic.
 
 This system supports:
 - **JWT-based authentication** via Keycloak
@@ -33,13 +33,13 @@ This system supports:
 
 ### Identity Provider
 
-ForqStudio uses **Keycloak** as the external identity provider for user authentication.
+Alcatraz uses **Keycloak** as the external identity provider for user authentication.
 
 ### User Registration
 
 The `AuthenticationService` handles user registration by creating users in Keycloak with password credentials.
 
-**Location**: `src/ForqStudio.Infrastructure/Authentication/AuthenticationService.cs`
+**Location**: `src/Alcatraz.Infrastructure/Authentication/AuthenticationService.cs`
 
 ```csharp
 public interface IAuthenticationService
@@ -57,7 +57,7 @@ public interface IAuthenticationService
 
 The `JwtService` obtains JWT access tokens from Keycloak using the OAuth2 password grant flow.
 
-**Location**: `src/ForqStudio.Infrastructure/Authentication/JwtService.cs`
+**Location**: `src/Alcatraz.Infrastructure/Authentication/JwtService.cs`
 
 ```csharp
 public interface IJwtService
@@ -81,7 +81,7 @@ public interface IJwtService
 
 The `UserContext` provides access to the current authenticated user's information from the HTTP context.
 
-**Location**: `src/ForqStudio.Infrastructure/Authentication/UserContext.cs`
+**Location**: `src/Alcatraz.Infrastructure/Authentication/UserContext.cs`
 
 ```csharp
 public interface IUserContext
@@ -114,7 +114,7 @@ public static string GetIdentityId(this ClaimsPrincipal? principal)
 
 The `AdminAuthorizationDelegatingHandler` handles administrative operations that require client credentials flow to obtain admin tokens from Keycloak.
 
-**Location**: `src/ForqStudio.Infrastructure/Authentication/AdminAuthorizationDelegatingHandler.cs`
+**Location**: `src/Alcatraz.Infrastructure/Authentication/AdminAuthorizationDelegatingHandler.cs`
 
 ```csharp
 public sealed class AdminAuthorizationDelegatingHandler : DelegatingHandler
@@ -154,7 +154,7 @@ public sealed class AdminAuthorizationDelegatingHandler : DelegatingHandler
 
 ### Permission-Based Authorization
 
-ForqStudio implements a **custom permission-based authorization system** that dynamically checks user permissions against required permissions.
+Alcatraz implements a **custom permission-based authorization system** that dynamically checks user permissions against required permissions.
 
 ### Authorization Components
 
@@ -162,7 +162,7 @@ ForqStudio implements a **custom permission-based authorization system** that dy
 
 A custom attribute used to secure API endpoints by requiring specific permissions.
 
-**Location**: `src/ForqStudio.Infrastructure/Authorization/HasPermissionAttribute.cs`
+**Location**: `src/Alcatraz.Infrastructure/Authorization/HasPermissionAttribute.cs`
 
 ```csharp
 public sealed class HasPermissionAttribute(string permission) : AuthorizeAttribute(permission)
@@ -183,7 +183,7 @@ public async Task<IActionResult> CreateUser([FromBody] CreateUserRequest request
 
 Represents a single permission requirement for authorization.
 
-**Location**: `src/ForqStudio.Infrastructure/Authorization/PermissionRequirement.cs`
+**Location**: `src/Alcatraz.Infrastructure/Authorization/PermissionRequirement.cs`
 
 ```csharp
 internal sealed class PermissionRequirement(string permission) : IAuthorizationRequirement
@@ -196,7 +196,7 @@ internal sealed class PermissionRequirement(string permission) : IAuthorizationR
 
 Handles the authorization check for permission requirements.
 
-**Location**: `src/ForqStudio.Infrastructure/Authorization/PermissionAuthorizationHandler.cs`
+**Location**: `src/Alcatraz.Infrastructure/Authorization/PermissionAuthorizationHandler.cs`
 
 ```csharp
 internal sealed class PermissionAuthorizationHandler(IServiceProvider serviceProvider) 
@@ -229,7 +229,7 @@ internal sealed class PermissionAuthorizationHandler(IServiceProvider servicePro
 
 Dynamically creates authorization policies for permission requirements.
 
-**Location**: `src/ForqStudio.Infrastructure/Authorization/PermissionAuthorizationPolicyProvider.cs`
+**Location**: `src/Alcatraz.Infrastructure/Authorization/PermissionAuthorizationPolicyProvider.cs`
 
 ```csharp
 internal sealed class PermissionAuthorizationPolicyProvider 
@@ -259,7 +259,7 @@ internal sealed class PermissionAuthorizationPolicyProvider
 
 Enriches user claims with roles from the database on authentication. This transforms the claims principal after successful authentication to include database-specific role information.
 
-**Location**: `src/ForqStudio.Infrastructure/Authorization/CustomClaimsTransformation.cs`
+**Location**: `src/Alcatraz.Infrastructure/Authorization/CustomClaimsTransformation.cs`
 
 ```csharp
 public sealed class CustomClaimsTransformation : IClaimsTransformation
@@ -303,7 +303,7 @@ public sealed class CustomClaimsTransformation : IClaimsTransformation
 
 Provides methods to retrieve user roles and permissions, with caching support.
 
-**Location**: `src/ForqStudio.Infrastructure/Authorization/AuthorizationService.cs`
+**Location**: `src/Alcatraz.Infrastructure/Authorization/AuthorizationService.cs`
 
 ```csharp
 internal sealed class AuthorizationService(ApplicationDbContext dbContext, ICacheService cacheService)
@@ -361,7 +361,7 @@ internal sealed class AuthorizationService(ApplicationDbContext dbContext, ICach
 
 Represents an application user, linked to Keycloak via `IdentityId`.
 
-**Location**: `src/ForqStudio.Domain/Users/User.cs`
+**Location**: `src/Alcatraz.Domain/Users/User.cs`
 
 ```csharp
 public sealed class User : Entity
@@ -391,7 +391,7 @@ public sealed class User : Entity
 
 Represents a role that can be assigned to users and contains permissions.
 
-**Location**: `src/ForqStudio.Domain/Users/Role.cs`
+**Location**: `src/Alcatraz.Domain/Users/Role.cs`
 
 ```csharp
 public sealed class Role
@@ -413,13 +413,13 @@ public sealed class Role
 
 Represents a granular permission that can be assigned to roles.
 
-**Location**: `src/ForqStudio.Domain/Users/Permission.cs`
+**Location**: `src/Alcatraz.Domain/Users/Permission.cs`
 
 ### Permissions Static Class
 
 Defines all available permission constants.
 
-**Location**: `src/ForqStudio.Domain/Users/Permissions.cs`
+**Location**: `src/Alcatraz.Domain/Users/Permissions.cs`
 
 ```csharp
 public static class Permissions
@@ -437,7 +437,7 @@ public static class Permissions
 
 Defines all available role constants.
 
-**Location**: `src/ForqStudio.Domain/Users/Roles.cs`
+**Location**: `src/Alcatraz.Domain/Users/Roles.cs`
 
 ```csharp
 public static class Roles
@@ -468,6 +468,48 @@ public static class Roles
    - Client includes JWT token in Authorization header (`Bearer {token}`)
    - ASP.NET Core validates JWT token signature and expiration
    - `CustomClaimsTransformation.TransformAsync()` enriches claims with database roles
+
+%% Register, password-grant login, and first authenticated request
+```mermaid
+sequenceDiagram
+    actor User
+    participant Client
+    participant API as alcatraz.api
+    participant Keycloak
+    participant DB as Postgres
+    participant Cache as Redis
+
+    %% Registration
+    User->>Client: sign up<br/>(email, password, name)
+    Client->>API: POST /api/v1/users/register
+    API->>Keycloak: create user<br/>(password credential)
+    Keycloak-->>API: 201 + Location header<br/>(IdentityId)
+    API->>DB: insert User<br/>(IdentityId → UserId)
+    API-->>Client: 201 Created
+
+    %% Login
+    User->>Client: log in
+    Client->>API: POST /login {email, password}
+    API->>Keycloak: OAuth2 password grant
+    Keycloak-->>API: JWT access_token
+    API-->>Client: JWT
+
+    %% Authenticated request
+    Client->>API: GET /resource<br/>Authorization: Bearer JWT
+    Note over API: ASP.NET Core JWT middleware:<br/>signature, exp, iss, aud
+    Note over API: CustomClaimsTransformation.TransformAsync
+    API->>Cache: GET auth:roles:{identityId}
+    alt cache hit
+        Cache-->>API: roles
+    else cache miss
+        API->>DB: SELECT roles for user
+        DB-->>API: roles
+        API->>Cache: SET auth:roles:{identityId}
+    end
+    Note over API: enrich principal:<br/>+ Sub = UserId<br/>+ Role claims
+    API-->>API: dispatch to handler
+    API-->>Client: 200 + payload
+```
 
 ### Authorization Flow
 
@@ -535,7 +577,7 @@ The application layer contains MediatR handlers for managing users, roles, and p
 
 ### Users
 
-**Location**: `src/ForqStudio.Application/Users/`
+**Location**: `src/Alcatraz.Application/Users/`
 
 - `RegisterUserCommandHandler`: Handles user registration
 - `LoginUserCommandHandler`: Handles user login
@@ -543,7 +585,7 @@ The application layer contains MediatR handlers for managing users, roles, and p
 
 ### Roles Management
 
-**Location**: `src/ForqStudio.Application/Roles/`
+**Location**: `src/Alcatraz.Application/Roles/`
 
 - `CreateRoleCommandHandler`: Creates new roles with optional permissions
 - `UpdateRoleCommandHandler`: Updates role details and permissions
@@ -555,7 +597,7 @@ The application layer contains MediatR handlers for managing users, roles, and p
 
 ### Permissions Management
 
-**Location**: `src/ForqStudio.Application/Permissions/`
+**Location**: `src/Alcatraz.Application/Permissions/`
 
 - `CreatePermissionCommandHandler`: Creates new permissions
 - `UpdatePermissionCommandHandler`: Updates permission details
@@ -665,10 +707,10 @@ Keycloak settings are configured in `appsettings.json`:
 {
   "Keycloak": {
     "Url": "https://keycloak.example.com",
-    "Realm": "forqstudio",
-    "AuthClientId": "forqstudio-auth",
+    "Realm": "alcatraz",
+    "AuthClientId": "alcatraz-auth",
     "AuthClientSecret": "your-client-secret",
-    "AdminClientId": "forqstudio-admin",
+    "AdminClientId": "alcatraz-admin",
     "AdminClientSecret": "your-admin-secret"
   }
 }

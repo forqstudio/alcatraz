@@ -7,7 +7,7 @@
     <ProjectGuid>9a053cd7-34a2-4786-89dd-85a0d6a00aa4</ProjectGuid>
     <DockerLaunchAction>LaunchBrowser</DockerLaunchAction>
     <DockerServiceUrl>{Scheme}://localhost:{ServicePort}/swagger</DockerServiceUrl>
-    <DockerServiceName>forqstudio.api</DockerServiceName>
+    <DockerServiceName>alcatraz.api</DockerServiceName>
   </PropertyGroup>
   <ItemGroup>
     <None Include="docker-compose.override.yml">

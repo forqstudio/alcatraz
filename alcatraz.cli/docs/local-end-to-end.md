@@ -19,11 +19,11 @@ The full stack lives in the repo-root `docker-compose.yml`. The worker is host-r
 cd /path/to/alcatraz   # repo root
 docker compose up -d
 docker compose ps
-# expect: ForqStudio.{Api,Db,Identity,Redis,Nats,Seq,DemoSshd} running
-#         + ForqStudio.CaInit exited 0 (CA key generation)
+# expect: Alcatraz.{Api,Db,Identity,Redis,Nats,Seq,DemoSshd} running
+#         + Alcatraz.CaInit exited 0 (CA key generation)
 ```
 
-EF migrations apply automatically on API startup — wait for `Now listening on: http://[::]:8080` in `docker compose logs forqstudio.api`.
+EF migrations apply automatically on API startup — wait for `Now listening on: http://[::]:8080` in `docker compose logs alcatraz.api`.
 
 ## 2. Build the CLI
 
@@ -82,7 +82,7 @@ dotnet run --project alcatraz.cli/src/Alcatraz.Cli -- sandbox get "$ID"
 In production, the worker writes `/etc/ssh/auth_principals/al` containing the sandbox UUID into the AgentFS overlay before booting the VM. For the local demo we do the same with `docker exec`:
 
 ```bash
-docker exec ForqStudio.DemoSshd sh -c "echo $ID > /etc/ssh/auth_principals/al"
+docker exec Alcatraz.DemoSshd sh -c "echo $ID > /etc/ssh/auth_principals/al"
 ```
 
 ## 8. SSH

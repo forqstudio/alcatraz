@@ -177,8 +177,8 @@ public void Configure(JwtBearerOptions options)
 // appsettings.Development.json
 "Authentication": {
   "Audience":             "account",
-  "ValidIssuer":          "http://forqstudio-idp:8080/realms/forqstudio",
-  "MetadataUrl":          "http://forqstudio-idp:8080/realms/forqstudio/.well-known/openid-configuration",
+  "ValidIssuer":          "http://alcatraz-idp:8080/realms/alcatraz",
+  "MetadataUrl":          "http://alcatraz-idp:8080/realms/alcatraz/.well-known/openid-configuration",
   "RequireHttpsMetadata": false
 }
 ```
@@ -418,23 +418,23 @@ Two clients are configured in Keycloak:
 
 | Client | Purpose | Grant Type |
 |---|---|---|
-| `forqstudio-auth-client` | User login (get JWT) | Resource Owner Password Credentials |
-| `forqstudio-admin-client` | Registering users via Admin API | Client Credentials |
+| `alcatraz-auth-client` | User login (get JWT) | Resource Owner Password Credentials |
+| `alcatraz-admin-client` | Registering users via Admin API | Client Credentials |
 
 ```jsonc
 // appsettings.Development.json
 "Keycloak": {
-  "BaseUrl":           "http://forqstudio-idp:8080",
-  "AdminUrl":          "http://forqstudio-idp:8080/admin/realms/forqstudio/",
-  "TokenUrl":          "http://forqstudio-idp:8080/realms/forqstudio/protocol/openid-connect/token",
-  "AdminClientId":     "forqstudio-admin-client",
+  "BaseUrl":           "http://alcatraz-idp:8080",
+  "AdminUrl":          "http://alcatraz-idp:8080/admin/realms/alcatraz/",
+  "TokenUrl":          "http://alcatraz-idp:8080/realms/alcatraz/protocol/openid-connect/token",
+  "AdminClientId":     "alcatraz-admin-client",
   "AdminClientSecret": "<secret>",
-  "AuthClientId":      "forqstudio-auth-client",
+  "AuthClientId":      "alcatraz-auth-client",
   "AuthClientSecret":  "<secret>"
 }
 ```
 
-A Keycloak realm export is included at `.files/forqstudio-realm-export.json` and is automatically imported on startup via Docker Compose.
+A Keycloak realm export is included at `.files/alcatraz-realm-export.json` and is automatically imported on startup via Docker Compose.
 
 ---
 
@@ -459,7 +459,7 @@ docker compose up -d
 
 ```
 src/
-├── ForqStudio.Domain/
+├── Alcatraz.Domain/
 │   └── Users/
 │       ├── Permission.cs       # Permission entity
 │       ├── Permissions.cs      # Permission name constants
@@ -468,9 +468,9 @@ src/
 │       ├── User.cs             # User aggregate
 │       ├── IPermissionRepository.cs
 │       └── IRoleRepository.cs
-├── ForqStudio.Application/
+├── Alcatraz.Application/
 │   └── Users/                  # Register, Login, GetLoggedInUser use cases
-├── ForqStudio.Infrastructure/
+├── Alcatraz.Infrastructure/
 │   ├── Authentication/
 │   │   ├── AuthenticationService.cs        # Keycloak Admin API (user registration)
 │   │   ├── JwtService.cs                   # Keycloak token endpoint (login)
@@ -484,7 +484,7 @@ src/
 │       ├── PermissionAuthorizationHandler.cs        # Evaluates permission requirements
 │       ├── PermissionAuthorizationPolicyProvider.cs # Creates policies on demand
 │       └── PermissionRequirement.cs                 # IAuthorizationRequirement
-└── ForqStudio.Api/
+└── Alcatraz.Api/
     └── Controllers/
         ├── Users/          # Register, Login, GetLoggedInUser
         ├── Roles/          # CRUD for roles + permission assignment

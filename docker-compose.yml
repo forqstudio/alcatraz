@@ -1,15 +1,15 @@
 services:
-  forqstudio.api:
-    image: ${DOCKER_REGISTRY-}forqstudioapi
-    container_name: ForqStudio.Api
+  alcatraz.api:
+    image: ${DOCKER_REGISTRY-}alcatrazapi
+    container_name: Alcatraz.Api
     build:
       context: ./alcatraz.api/src
-      dockerfile: ForqStudio.Api/Dockerfile
+      dockerfile: Alcatraz.Api/Dockerfile
     environment:
       - ASPNETCORE_ENVIRONMENT=Development
       - ASPNETCORE_HTTP_PORTS=8080
       - Ssh__CA__PrivateKeyPath=/run/alcatraz-ca/alcatraz_ca
-      - Nats__Url=nats://forqstudio-nats:4222
+      - Nats__Url=nats://alcatraz-nats:4222
       # When unset, the cert response carries the per-sandbox endpoint reported
       # by the worker (direct VM IP, local dev). To route through Traefik, set:
       #   Gateway__Host=ssh.alcatraz.io
@@ -19,24 +19,24 @@ services:
     volumes:
       - alcatraz_ca:/run/alcatraz-ca:ro
     depends_on:
-      forqstudio-db:
+      alcatraz-db:
         condition: service_healthy
-      forqstudio-idp:
+      alcatraz-idp:
         condition: service_started
-      forqstudio-seq:
+      alcatraz-seq:
         condition: service_started
-      forqstudio-redis:
+      alcatraz-redis:
         condition: service_started
-      forqstudio-nats:
+      alcatraz-nats:
         condition: service_started
-      forqstudio-ca-init:
+      alcatraz-ca-init:
         condition: service_completed_successfully
 
-  forqstudio-db:
+  alcatraz-db:
     image: postgres:16
-    container_name: ForqStudio.Db
+    container_name: Alcatraz.Db
     environment:
-      - POSTGRES_DB=forqstudio
+      - POSTGRES_DB=alcatraz
       - POSTGRES_USER=postgres
       - POSTGRES_PASSWORD=postgres
     volumes:
@@ -44,33 +44,33 @@ services:
     ports:
       - "5432:5432"
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres -d forqstudio"]
+      test: ["CMD-SHELL", "pg_isready -U postgres -d alcatraz"]
       interval: 5s
       timeout: 5s
       retries: 5
 
-  forqstudio-idp:
+  alcatraz-idp:
     image: quay.io/keycloak/keycloak:25.0
-    container_name: ForqStudio.Identity
+    container_name: Alcatraz.Identity
     command: start-dev --import-realm
     environment:
       - KEYCLOAK_ADMIN=admin
       - KEYCLOAK_ADMIN_PASSWORD=admin
       # Make device-flow verification URLs host-reachable. Without this,
-      # Keycloak emits http://forqstudio-idp:8080/... which only resolves
+      # Keycloak emits http://alcatraz-idp:8080/... which only resolves
       # inside the docker network.
       - KC_HOSTNAME_URL=http://localhost:8082
       - KC_HOSTNAME_STRICT=false
       - KC_HOSTNAME_STRICT_BACKCHANNEL=false
     volumes:
       - keycloak_data:/opt/keycloak/data
-      - ./alcatraz.api/.files/forqstudio-realm-export.json:/opt/keycloak/data/import/realm.json
+      - ./alcatraz.api/.files/alcatraz-realm-export.json:/opt/keycloak/data/import/realm.json
     ports:
       - "8082:8080"
 
-  forqstudio-seq:
+  alcatraz-seq:
     image: datalust/seq:2024.3
-    container_name: ForqStudio.Seq
+    container_name: Alcatraz.Seq
     environment:
       - ACCEPT_EULA=Y
       - SEQ_FIRSTRUN_NOAUTHENTICATION=true
@@ -78,16 +78,16 @@ services:
       - "5341:5341"
       - "8083:80"
 
-  forqstudio-redis:
+  alcatraz-redis:
     image: redis:7
-    container_name: ForqStudio.Redis
+    container_name: Alcatraz.Redis
     restart: always
     ports:
       - "6379:6379"
 
-  forqstudio-nats:
+  alcatraz-nats:
     image: nats:2.10
-    container_name: ForqStudio.Nats
+    container_name: Alcatraz.Nats
     command: ["-js", "-m", "8222"]
     ports:
       - "4222:4222"
@@ -95,8 +95,8 @@ services:
 
   # Generates the shared SSH CA key into the alcatraz_ca volume on first boot.
   # Idempotent: skips if a key already exists.
-  forqstudio-ca-init:
-    container_name: ForqStudio.CaInit
+  alcatraz-ca-init:
+    container_name: Alcatraz.CaInit
     build:
       context: ./alcatraz.api/.files/ca-init
       dockerfile: Dockerfile
@@ -107,8 +107,8 @@ services:
   # the CLI directly at the worker-reported VM IP, so this is gated behind a
   # profile and won't start with `docker compose up`. Bring it up with
   # `--profile demo-sshd` if you want to test the cert pipeline without a worker.
-  forqstudio-demo-sshd:
-    container_name: ForqStudio.DemoSshd
+  alcatraz-demo-sshd:
+    container_name: Alcatraz.DemoSshd
     profiles: ["demo-sshd"]
     build:
       context: ./alcatraz.api/.files/demo-sshd
@@ -118,17 +118,17 @@ services:
     volumes:
       - alcatraz_ca:/run/alcatraz-ca:ro
     depends_on:
-      forqstudio-ca-init:
+      alcatraz-ca-init:
         condition: service_completed_successfully
 
   # Public TLS ingress for SSH-over-TLS. SNI = sandbox UUID; per-sandbox routes
-  # are written by `forqstudio-routes` into the traefik_dynamic volume.
+  # are written by `alcatraz-routes` into the traefik_dynamic volume.
   # network_mode: host so Traefik can dial 172.16.0.0/24 (the worker's bridge
   # subnet). Bring up with `--profile gateway` on a public host with DNS for
   # GATEWAY_AUTOCERT_HOST pointed at it.
-  forqstudio-traefik:
+  alcatraz-traefik:
     image: traefik:3.1
-    container_name: ForqStudio.Traefik
+    container_name: Alcatraz.Traefik
     profiles: ["gateway"]
     network_mode: host
     volumes:
@@ -139,14 +139,14 @@ services:
 
   # Subscribes to NATS vm.ready / vm.destroyed (no queue group, fanout) and
   # writes Traefik's dynamic file provider config. Hot-reload picks up changes.
-  forqstudio-routes:
+  alcatraz-routes:
     image: ${DOCKER_REGISTRY-}alcatrazroutes
-    container_name: ForqStudio.Routes
+    container_name: Alcatraz.Routes
     profiles: ["gateway"]
     build:
       context: ./alcatraz.routes
     environment:
-      - NATS_URL=nats://forqstudio-nats:4222
+      - NATS_URL=nats://alcatraz-nats:4222
       - NATS_READY_SUBJECT=vm.ready
       - NATS_DESTROYED_SUBJECT=vm.destroyed
       - OUTPUT_PATH=/output/sandboxes.yml
@@ -154,7 +154,7 @@ services:
     volumes:
       - traefik_dynamic:/output
     depends_on:
-      forqstudio-nats:
+      alcatraz-nats:
         condition: service_started
     restart: unless-stopped
 

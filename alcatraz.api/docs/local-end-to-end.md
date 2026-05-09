@@ -15,13 +15,13 @@ For an even simpler smoke test that doesn't need a worker, the `--profile demo-s
 
 | Service | Purpose |
 |---|---|
-| `forqstudio.api` | Our API on `:8080`. Subscribes to `vm.ready` and transitions sandboxes to `Running` |
-| `forqstudio-db` | Postgres on `:5432` |
-| `forqstudio-idp` | Keycloak on `:8082` (realm export pre-configured with device flow enabled) |
-| `forqstudio-redis` | Redis on `:6379` |
-| `forqstudio-nats` | NATS broker on `:4222` (monitoring on `:8222`) |
-| `forqstudio-seq` | Seq log viewer on `:8083` |
-| `forqstudio-ca-init` | Generates the shared CA key into the `alcatraz_ca` volume on first boot |
+| `alcatraz.api` | Our API on `:8080`. Subscribes to `vm.ready` and transitions sandboxes to `Running` |
+| `alcatraz-db` | Postgres on `:5432` |
+| `alcatraz-idp` | Keycloak on `:8082` (realm export pre-configured with device flow enabled) |
+| `alcatraz-redis` | Redis on `:6379` |
+| `alcatraz-nats` | NATS broker on `:4222` (monitoring on `:8222`) |
+| `alcatraz-seq` | Seq log viewer on `:8083` |
+| `alcatraz-ca-init` | Generates the shared CA key into the `alcatraz_ca` volume on first boot |
 
 Two extra profiles:
 
@@ -38,7 +38,7 @@ If you've previously run `docker compose up`, you must wipe volumes when the rea
 cd /path/to/alcatraz   # repo root
 docker compose down -v
 docker compose up -d --build
-docker compose logs -f forqstudio.api
+docker compose logs -f alcatraz.api
 # Wait for "Now listening on: http://[::]:8080"
 ```
 
@@ -119,7 +119,7 @@ You can watch the events on NATS in another shell:
 
 ```bash
 docker run --rm --network alcatraz_default natsio/nats-box:latest \
-  nats sub 'vm.>' -s nats://forqstudio-nats:4222
+  nats sub 'vm.>' -s nats://alcatraz-nats:4222
 ```
 
 Or just poll the API:
@@ -198,9 +198,9 @@ Because the API now hard-requires `Running` for cert issuance and there's no wor
 
 ```bash
 ID=...   # from /sandboxes
-docker exec ForqStudio.Db psql -U postgres -d forqstudio \
+docker exec Alcatraz.Db psql -U postgres -d alcatraz \
   -c "UPDATE sandboxes SET status = 2, host = 'localhost', port = 2222 WHERE id = '$ID';"
-docker exec ForqStudio.DemoSshd sh -c "echo $ID > /etc/ssh/auth_principals/al"
+docker exec Alcatraz.DemoSshd sh -c "echo $ID > /etc/ssh/auth_principals/al"
 ```
 
 Then steps 5–6 of the walkthrough work against `localhost:2222`. Prefer the proper worker path for everything else.

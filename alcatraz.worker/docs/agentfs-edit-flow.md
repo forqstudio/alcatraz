@@ -14,15 +14,23 @@ audit log AgentFS keeps, and the options you have for moving changes back out.
 When the guest edits `/etc/foo.conf` (or anything else under `/`), the request
 travels:
 
-```
-guest write(2)
-  → guest NFS client (kernel)
-    → TCP to host bridge gateway 172.16.0.1:<8000+slot>
-      → in-process go-nfs server          (alcatraz.worker/internal/vm/agentfs/nfs_server.go)
-        → billyFS adapter                 (alcatraz.worker/internal/vm/agentfs/billy_adapter.go)
-          → sdk.OverlayFS                 (github.com/tursodatabase/agentfs/sdk/go)
-            → SQLite delta DB             (alcatraz.core/.agentfs/<agent-id>.db)
-                                          (host rootfs is read-only; never mutated)
+%% Guest write → NFS → AgentFS overlay → SQLite delta (base rootfs is read-only)
+```mermaid
+flowchart LR
+    Guest["guest write(2)"]
+    KNFS["guest NFS client<br/>(kernel)"]
+    GoNFS["in-process go-nfs server<br/>nfs_server.go"]
+    Billy["billyFS adapter<br/>billy_adapter.go"]
+    Overlay["sdk.OverlayFS<br/>(tursodatabase/agentfs)"]
+    DB[(SQLite delta<br/>alcatraz.core/.agentfs/&lt;agent-id&gt;.db)]
+    Base[(host rootfs<br/>read-only)]
+
+    Guest --> KNFS
+    KNFS -- "TCP 172.16.0.1:&lt;8000+slot&gt;" --> GoNFS
+    GoNFS --> Billy
+    Billy --> Overlay
+    Overlay -- "WriteFile / Unlink / Rename" --> DB
+    Overlay -. "Stat / Lookup / Read passthrough" .-> Base
 ```
 
 Key points worth knowing when reading or debugging:

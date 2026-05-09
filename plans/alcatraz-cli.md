@@ -170,7 +170,7 @@ CLI exit codes: `0` ok, `1` generic, `2` not logged in, `3` invalid args, `4` no
 
 Mirrors the existing device-token exchange exactly.
 
-**Application layer** — `src/ForqStudio.Application/Auth/RefreshDeviceToken/`:
+**Application layer** — `src/Alcatraz.Application/Auth/RefreshDeviceToken/`:
 
 - `RefreshDeviceTokenCommand(string RefreshToken) : ICommand<DeviceTokenResponse>`.
 - `RefreshDeviceTokenCommandValidator` — `RefreshToken` non-empty, max length 8192.
@@ -184,9 +184,9 @@ Mirrors the existing device-token exchange exactly.
 
 **Tests:**
 
-- `test/ForqStudio.Application.UnitTests/Auth/RefreshDeviceTokenCommandHandlerTests.cs` — happy path; `InvalidGrant` and `RefreshFailed` propagate.
-- `test/ForqStudio.Application.UnitTests/Auth/RefreshDeviceTokenCommandValidatorTests.cs` — empty / overlong rejected.
-- `test/ForqStudio.Api.FunctionalTests/Auth/DeviceFlowEndpointsTests.cs` — three new cases: happy refresh → 200; `invalid_grant` → 400 with `error: invalid_grant`; missing body → 400. Reuses the `IDeviceAuthorizationClient` substitute pattern from `Factory`.
+- `test/Alcatraz.Application.UnitTests/Auth/RefreshDeviceTokenCommandHandlerTests.cs` — happy path; `InvalidGrant` and `RefreshFailed` propagate.
+- `test/Alcatraz.Application.UnitTests/Auth/RefreshDeviceTokenCommandValidatorTests.cs` — empty / overlong rejected.
+- `test/Alcatraz.Api.FunctionalTests/Auth/DeviceFlowEndpointsTests.cs` — three new cases: happy refresh → 200; `invalid_grant` → 400 with `error: invalid_grant`; missing body → 400. Reuses the `IDeviceAuthorizationClient` substitute pattern from `Factory`.
 
 ## Docker Compose consolidation
 
@@ -206,14 +206,14 @@ All retain their existing container names so internal DNS / appsettings continue
 
 | Service | Container name | Image / build | Host ports | Notes |
 |---|---|---|---|---|
-| `forqstudio.api` | `ForqStudio.Api` | build `./alcatraz.api/src` (Dockerfile `ForqStudio.Api/Dockerfile`) | `8080:8080` | Env: `ASPNETCORE_ENVIRONMENT=Development`, `Ssh__CA__PrivateKeyPath=/run/alcatraz-ca/alcatraz_ca`, `Nats__Url=nats://forqstudio-nats:4222`, `Gateway__Host=localhost`, `Gateway__Port=2222` (so `alcatraz ssh` auto-points at the demo sshd). Volume `alcatraz_ca:/run/alcatraz-ca:ro`. |
-| `forqstudio-db` | `ForqStudio.Db` | `postgres:16` | `5432:5432` | Bind `./.containers/database:/var/lib/postgresql` (gitignored at repo root). Healthcheck `pg_isready`. |
-| `forqstudio-idp` | `ForqStudio.Identity` | `quay.io/keycloak/keycloak:25.0` | `8082:8080` | Volume `keycloak_data:/opt/keycloak/data` + bind `./alcatraz.api/.files/forqstudio-realm-export.json:/opt/keycloak/data/import/realm.json`. `KC_HOSTNAME_URL=http://localhost:8082` preserves the device-flow URL fix. |
-| `forqstudio-redis` | `ForqStudio.Redis` | `redis:7` | `6379:6379` | |
-| `forqstudio-nats` | `ForqStudio.Nats` | `nats:2.10` | `4222:4222`, `8222:8222` | Worker connects to `localhost:4222`. |
-| `forqstudio-seq` | `ForqStudio.Seq` | `datalust/seq:2024.3` | `5341:5341`, `8083:80` | Single Seq instance; worker also connects to `localhost:5341`. |
-| `forqstudio-ca-init` | `ForqStudio.CaInit` | build `./alcatraz.api/.files/ca-init` | none | One-shot. Volume `alcatraz_ca:/run/alcatraz-ca`. Idempotent — skips if key already present. |
-| `forqstudio-demo-sshd` | `ForqStudio.DemoSshd` | build `./alcatraz.api/.files/demo-sshd` | `2222:22` | Stand-in for a Firecracker VM; depends on ca-init. |
+| `alcatraz.api` | `Alcatraz.Api` | build `./alcatraz.api/src` (Dockerfile `Alcatraz.Api/Dockerfile`) | `8080:8080` | Env: `ASPNETCORE_ENVIRONMENT=Development`, `Ssh__CA__PrivateKeyPath=/run/alcatraz-ca/alcatraz_ca`, `Nats__Url=nats://alcatraz-nats:4222`, `Gateway__Host=localhost`, `Gateway__Port=2222` (so `alcatraz ssh` auto-points at the demo sshd). Volume `alcatraz_ca:/run/alcatraz-ca:ro`. |
+| `alcatraz-db` | `Alcatraz.Db` | `postgres:16` | `5432:5432` | Bind `./.containers/database:/var/lib/postgresql` (gitignored at repo root). Healthcheck `pg_isready`. |
+| `alcatraz-idp` | `Alcatraz.Identity` | `quay.io/keycloak/keycloak:25.0` | `8082:8080` | Volume `keycloak_data:/opt/keycloak/data` + bind `./alcatraz.api/.files/alcatraz-realm-export.json:/opt/keycloak/data/import/realm.json`. `KC_HOSTNAME_URL=http://localhost:8082` preserves the device-flow URL fix. |
+| `alcatraz-redis` | `Alcatraz.Redis` | `redis:7` | `6379:6379` | |
+| `alcatraz-nats` | `Alcatraz.Nats` | `nats:2.10` | `4222:4222`, `8222:8222` | Worker connects to `localhost:4222`. |
+| `alcatraz-seq` | `Alcatraz.Seq` | `datalust/seq:2024.3` | `5341:5341`, `8083:80` | Single Seq instance; worker also connects to `localhost:5341`. |
+| `alcatraz-ca-init` | `Alcatraz.CaInit` | build `./alcatraz.api/.files/ca-init` | none | One-shot. Volume `alcatraz_ca:/run/alcatraz-ca`. Idempotent — skips if key already present. |
+| `alcatraz-demo-sshd` | `Alcatraz.DemoSshd` | build `./alcatraz.api/.files/demo-sshd` | `2222:22` | Stand-in for a Firecracker VM; depends on ca-init. |
 
 **Excluded:**
 
@@ -239,7 +239,7 @@ All retain their existing container names so internal DNS / appsettings continue
 ## Implementation order
 
 1. **Compose consolidation** — single root `docker-compose.yml`, delete old files, update all docs.
-2. **API refresh endpoint** — `RefreshDeviceToken` command + handler + validator + `IDeviceAuthorizationClient.RefreshAsync` + `KeycloakDeviceAuthorizationClient.RefreshAsync` + controller route + `ResultExtensions` predicate + tests. `dotnet test alcatraz.api/ForqStudio.sln` must be green before touching the CLI.
+2. **API refresh endpoint** — `RefreshDeviceToken` command + handler + validator + `IDeviceAuthorizationClient.RefreshAsync` + `KeycloakDeviceAuthorizationClient.RefreshAsync` + controller route + `ResultExtensions` predicate + tests. `dotnet test alcatraz.api/Alcatraz.sln` must be green before touching the CLI.
 3. **CLI scaffold** — solution, `global.json`, csproj with package versions pinned, project + test project skeletons, `dotnet build` succeeding on minimal `Program.cs`.
 4. **CLI foundation** — `Configuration` → `TokenStore` → `IAlcatrazApiClient` + DTOs → `BearerHandler` → `DeviceFlowOrchestrator` → `LoginCommand`. End-to-end login working against the live API before adding sandbox commands.
 5. **Sandbox commands** — `create/list/get/delete/ssh-cert` + their settings types + `SandboxRenderer`.
@@ -270,7 +270,7 @@ The four existing API test projects all use Testcontainers — they don't depend
 
 ```bash
 dotnet test alcatraz.cli/Alcatraz.Cli.sln           # CLI suite
-dotnet test alcatraz.api/ForqStudio.sln             # API suite (incl. refresh endpoint tests)
+dotnet test alcatraz.api/Alcatraz.sln             # API suite (incl. refresh endpoint tests)
 cd alcatraz.worker && make test                     # worker suite (smoke)
 dotnet build alcatraz.cli/Alcatraz.Cli.sln -c Release   # static checks under TreatWarningsAsErrors
 ```
@@ -284,7 +284,7 @@ cd /path/to/alcatraz   # repo root
 
 # 1. Bring up the full stack from the root.
 docker compose up -d
-docker compose ps   # expect 7 services + ForqStudio.CaInit exited 0
+docker compose ps   # expect 7 services + Alcatraz.CaInit exited 0
 
 # 2. EF migrations auto-apply on API startup (no manual `dotnet ef database update` needed).
 
@@ -318,7 +318,7 @@ dotnet run --project alcatraz.cli/src/Alcatraz.Cli -- sandbox list
 
 # 9. Wire the demo sshd's auth_principals to this sandbox UUID
 #    (in production the worker writes this into the AgentFS overlay).
-docker exec ForqStudio.DemoSshd sh -c "echo $ID > /etc/ssh/auth_principals/al"
+docker exec Alcatraz.DemoSshd sh -c "echo $ID > /etc/ssh/auth_principals/al"
 
 # 10. SSH (interactive) and remote-command form
 dotnet run --project alcatraz.cli/src/Alcatraz.Cli -- ssh "$ID"
@@ -332,7 +332,7 @@ ssh-keygen -L -f ~/.config/alcatraz/certs/$ID-cert.pub
 dotnet run --project alcatraz.cli/src/Alcatraz.Cli -- sandbox list --json | jq .
 dotnet run --project alcatraz.cli/src/Alcatraz.Cli -- sandbox delete "$ID"
 
-# 13. Refresh-token path (manual): lower forqstudio-auth-client access-token TTL to
+# 13. Refresh-token path (manual): lower alcatraz-auth-client access-token TTL to
 #     60s in Keycloak's admin UI, wait 90s, then run `alcatraz sandbox list`.
 #     BearerHandler must call POST /api/v1/auth/refresh and the call must succeed
 #     without re-prompting login.

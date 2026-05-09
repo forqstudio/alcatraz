@@ -1,8 +1,8 @@
-# ForqStudio - Clean Architecture Booking System
+# Alcatraz - Clean Architecture Booking System
 
 ## Project Overview
 
-ForqStudio is a booking management system for apartment/property rentals built with .NET 8 and Clean Architecture principles. The application provides a complete booking workflow including search, reservation, confirmation, rejection, cancellation, and completion with user reviews.
+Alcatraz is a booking management system for apartment/property rentals built with .NET 8 and Clean Architecture principles. The application provides a complete booking workflow including search, reservation, confirmation, rejection, cancellation, and completion with user reviews.
 
 **Tech Stack:** .NET 8, ASP.NET Core Web API, PostgreSQL, Entity Framework Core, Redis, Keycloak, MediatR, Quartz.NET
 
@@ -15,10 +15,10 @@ ForqStudio is a booking management system for apartment/property rentals built w
 1. **Dependency Rule**: Dependencies point inward - Infrastructure and API depend on Application, Application depends on Domain. Domain has NO external dependencies.
 
 2. **Layer Responsibilities**:
-   - **Domain** (`ForqStudio.Domain`): Core business logic, aggregates, value objects, domain events, repository interfaces
-   - **Application** (`ForqStudio.Application`): Use cases (commands/queries), application services, interfaces for infrastructure
-   - **Infrastructure** (`ForqStudio.Infrastructure`): External integrations, data access, authentication, caching, email
-   - **API** (`ForqStudio.Api`): REST endpoints, middleware, configuration
+   - **Domain** (`Alcatraz.Domain`): Core business logic, aggregates, value objects, domain events, repository interfaces
+   - **Application** (`Alcatraz.Application`): Use cases (commands/queries), application services, interfaces for infrastructure
+   - **Infrastructure** (`Alcatraz.Infrastructure`): External integrations, data access, authentication, caching, email
+   - **API** (`Alcatraz.Api`): REST endpoints, middleware, configuration
 
 3. **CQRS Pattern**:
    - Commands for write operations (implement `ICommand<T>`)
@@ -53,12 +53,12 @@ ForqStudio is a booking management system for apartment/property rentals built w
 
 - **One Class Per File**: Each class/interface in its own file
 - **File Name = Type Name**: `Booking.cs` contains `Booking` class
-- **Namespace = Folder Path**: `ForqStudio.Domain.Bookings` for `src/ForqStudio.Domain/Bookings/`
+- **Namespace = Folder Path**: `Alcatraz.Domain.Bookings` for `src/Alcatraz.Domain/Bookings/`
 - **Feature Folders**: Group by feature/aggregate, not by type
 
 Example structure:
 ```
-ForqStudio.Application/
+Alcatraz.Application/
   Bookings/
     ReserveBooking/
       ReserveBookingCommand.cs
@@ -452,10 +452,10 @@ public class BookingTests
 
 ```bash
 # Add migration
-dotnet ef migrations add MigrationName --project src/ForqStudio.Infrastructure --startup-project src/ForqStudio.Api
+dotnet ef migrations add MigrationName --project src/Alcatraz.Infrastructure --startup-project src/Alcatraz.Api
 
 # Update database
-dotnet ef database update --project src/ForqStudio.Infrastructure --startup-project src/ForqStudio.Api
+dotnet ef database update --project src/Alcatraz.Infrastructure --startup-project src/Alcatraz.Api
 ```
 
 ## Running the Application
@@ -465,9 +465,9 @@ dotnet ef database update --project src/ForqStudio.Infrastructure --startup-proj
 cd ..   # repo root, NOT alcatraz.api/
 docker compose up -d
 
-# Run API on the host (alternative to the compose-built `forqstudio.api` service)
+# Run API on the host (alternative to the compose-built `alcatraz.api` service)
 cd alcatraz.api
-dotnet run --project src/ForqStudio.Api
+dotnet run --project src/Alcatraz.Api
 
 # Run tests
 dotnet test

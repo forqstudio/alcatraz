@@ -2,7 +2,7 @@
 
 ## Overview
 
-ForqStudio uses the **Transactional Outbox Pattern** to ensure reliable, at-least-once delivery of domain events without distributed transactions. When a domain operation saves changes, domain events are persisted as outbox messages **in the same database transaction** as the business data. A Quartz.NET background job then picks them up and publishes them via MediatR.
+Alcatraz uses the **Transactional Outbox Pattern** to ensure reliable, at-least-once delivery of domain events without distributed transactions. When a domain operation saves changes, domain events are persisted as outbox messages **in the same database transaction** as the business data. A Quartz.NET background job then picks them up and publishes them via MediatR.
 
 This pattern solves the dual-write problem: without it, you risk saving the entity but failing to publish the event, or publishing the event before the data is committed.
 
@@ -25,43 +25,22 @@ This pattern solves the dual-write problem: without it, you risk saving the enti
 
 ## Architecture Overview
 
-```
-┌──────────────────────────────────────────────────────────┐
-│                     Command Handler                      │
-│   1. Load aggregate from repository                      │
-│   2. Call domain method → raises domain event            │
-│   3. Save changes (UnitOfWork.SaveChangesAsync)          │
-└─────────────────────────┬────────────────────────────────┘
-                          │
-                          ▼
-┌──────────────────────────────────────────────────────────┐
-│              ApplicationDbContext.SaveChangesAsync       │
-│   Intercepts save, reads domain events from entities,    │
-│   serializes them as OutboxMessages, saves both in       │
-│   a single atomic transaction                            │
-└─────────────────────────┬────────────────────────────────┘
-                          │  (same DB transaction)
-                          ▼
-                  ┌───────────────┐
-                  │ outbox_messages│
-                  │   (PostgreSQL) │
-                  └───────┬───────┘
-                          │
-                          │  (Quartz.NET polls every N seconds)
-                          ▼
-┌──────────────────────────────────────────────────────────┐
-│              ProcessOutboxMessagesJob                    │
-│   1. SELECT unprocessed messages (FOR UPDATE)            │
-│   2. Deserialize JSON → IDomainEvent                     │
-│   3. publisher.Publish(domainEvent) via MediatR          │
-│   4. UPDATE processed_on_utc / error                     │
-└─────────────────────────┬────────────────────────────────┘
-                          │
-                          ▼
-┌──────────────────────────────────────────────────────────┐
-│              INotificationHandler<TDomainEvent>          │
-│   Side effects: send emails, update read models, etc.    │
-└──────────────────────────────────────────────────────────┘
+%% Domain event → outbox row → Quartz dispatch → MediatR handler
+```mermaid
+flowchart TD
+    subgraph save["ApplicationDbContext.SaveChangesAsync (one DB tx)"]
+        Cmd[Command Handler]
+        AddOutbox[AddDomainEventsAsOutboxMessages]
+        Save[base.SaveChangesAsync]
+        Cmd -- "domain method raises events" --> AddOutbox
+        AddOutbox -- "AddRange(outboxMessages)" --> Save
+    end
+    Save -- "INSERT entity rows<br/>+ outbox rows" --> Outbox[(outbox_messages<br/>PostgreSQL jsonb)]
+    Job[ProcessOutboxMessagesJob<br/>Quartz, every N seconds]
+    Job -- "SELECT … WHERE processed_on_utc IS NULL<br/>FOR UPDATE" --> Outbox
+    Job -- "JsonConvert.DeserializeObject<br/>→ IDomainEvent" --> Mediatr[MediatR publisher.Publish]
+    Mediatr --> Handlers["INotificationHandler&lt;TEvent&gt;<br/>side effects"]
+    Job -- "UPDATE processed_on_utc, error" --> Outbox
 ```
 
 ---
@@ -73,10 +52,10 @@ This pattern solves the dual-write problem: without it, you risk saving the enti
 Domain events implement `IDomainEvent`, which extends MediatR's `INotification`. This allows MediatR to publish them to registered handlers.
 
 ```csharp
-// src/ForqStudio.Domain/Abstractions/IDomainEvent.cs
+// src/Alcatraz.Domain/Abstractions/IDomainEvent.cs
 using MediatR;
 
-namespace ForqStudio.Domain.Abstractions;
+namespace Alcatraz.Domain.Abstractions;
 
 public interface IDomainEvent : INotification
 {
@@ -88,19 +67,19 @@ public interface IDomainEvent : INotification
 Domain events are immutable records named in the past tense. They carry only the minimum data needed to identify what happened — typically just the aggregate ID, since handlers can reload the full aggregate from the database.
 
 ```csharp
-// src/ForqStudio.Domain/Bookings/Events/BookingReservedDomainEvent.cs
+// src/Alcatraz.Domain/Bookings/Events/BookingReservedDomainEvent.cs
 public sealed record BookingReservedDomainEvent(Guid BookingId) : IDomainEvent;
 
-// src/ForqStudio.Domain/Bookings/Events/BookingConfirmedDomainEvent.cs
+// src/Alcatraz.Domain/Bookings/Events/BookingConfirmedDomainEvent.cs
 public sealed record BookingConfirmedDomainEvent(Guid BookingId) : IDomainEvent;
 
-// src/ForqStudio.Domain/Bookings/Events/BookingRejectedDomainEvent.cs
+// src/Alcatraz.Domain/Bookings/Events/BookingRejectedDomainEvent.cs
 public sealed record BookingRejectedDomainEvent(Guid BookingId) : IDomainEvent;
 
-// src/ForqStudio.Domain/Bookings/Events/BookingCancelledDomainEvent.cs
+// src/Alcatraz.Domain/Bookings/Events/BookingCancelledDomainEvent.cs
 public sealed record BookingCancelledDomainEvent(Guid BookingId) : IDomainEvent;
 
-// src/ForqStudio.Domain/Bookings/Events/BookingCompletedDomainEvent.cs
+// src/Alcatraz.Domain/Bookings/Events/BookingCompletedDomainEvent.cs
 public sealed record BookingCompletedDomainEvent(Guid BookingId) : IDomainEvent;
 ```
 
@@ -109,7 +88,7 @@ public sealed record BookingCompletedDomainEvent(Guid BookingId) : IDomainEvent;
 The `Entity` base class holds a private list of pending domain events. Aggregates call `RaiseDomainEvent()` during state transitions. The events are not published immediately — they queue up until `SaveChangesAsync` is called.
 
 ```csharp
-// src/ForqStudio.Domain/Abstractions/Entity.cs
+// src/Alcatraz.Domain/Abstractions/Entity.cs
 public abstract class Entity
 {
     private readonly List<IDomainEvent> _domainEvents = new();
@@ -131,7 +110,7 @@ public abstract class Entity
 Inside a domain method, raising an event is a single line after updating state:
 
 ```csharp
-// src/ForqStudio.Domain/Bookings/Booking.cs
+// src/Alcatraz.Domain/Bookings/Booking.cs
 public Result Confirm(DateTime utcNow)
 {
     if (Status != BookingStatus.Reserved)
@@ -172,7 +151,7 @@ A single domain operation can raise multiple events. All of them will be capture
 `OutboxMessage` is a plain data record stored in the database. It represents a single domain event that needs to be (or has been) published.
 
 ```csharp
-// src/ForqStudio.Infrastructure/Outbox/OutboxMessage.cs
+// src/Alcatraz.Infrastructure/Outbox/OutboxMessage.cs
 public sealed class OutboxMessage
 {
     public OutboxMessage(Guid id, DateTime occurredOnUtc, string type, string content)
@@ -217,7 +196,7 @@ public sealed class OutboxMessage
 `ApplicationDbContext.SaveChangesAsync` intercepts every save. Before delegating to EF Core, it scans the change tracker for entities with pending domain events, serializes each event into an `OutboxMessage`, clears the events from the entity, and adds the messages to the same unit of work.
 
 ```csharp
-// src/ForqStudio.Infrastructure/ApplicationDbContext.cs
+// src/Alcatraz.Infrastructure/ApplicationDbContext.cs
 public sealed class ApplicationDbContext(
     DbContextOptions<ApplicationDbContext> options,
     IDateTimeProvider _dateTimeProvider
@@ -279,7 +258,7 @@ For a `BookingReservedDomainEvent(BookingId: "abc-123")`, the stored `content` c
 
 ```json
 {
-  "$type": "ForqStudio.Domain.Bookings.Events.BookingReservedDomainEvent, ForqStudio.Domain",
+  "$type": "Alcatraz.Domain.Bookings.Events.BookingReservedDomainEvent, Alcatraz.Domain",
   "BookingId": "abc-123-..."
 }
 ```
@@ -293,7 +272,7 @@ The `$type` field is what allows the job to deserialize back to the concrete `ID
 The `outbox_messages` table is created by a dedicated migration:
 
 ```csharp
-// src/ForqStudio.Infrastructure/Migrations/20240514133129_Add_Outbox.cs
+// src/Alcatraz.Infrastructure/Migrations/20240514133129_Add_Outbox.cs
 protected override void Up(MigrationBuilder migrationBuilder)
 {
     migrationBuilder.CreateTable(
@@ -317,7 +296,7 @@ protected override void Up(MigrationBuilder migrationBuilder)
 The `content` column uses PostgreSQL's `jsonb` type (configured in `OutboxMessageConfiguration`), which stores JSON in a binary format that enables efficient querying and indexing if needed.
 
 ```csharp
-// src/ForqStudio.Infrastructure/Configurations/OutboxMessageConfiguration.cs
+// src/Alcatraz.Infrastructure/Configurations/OutboxMessageConfiguration.cs
 internal sealed class OutboxMessageConfiguration : IEntityTypeConfiguration<OutboxMessage>
 {
     public void Configure(EntityTypeBuilder<OutboxMessage> builder)
@@ -335,8 +314,31 @@ internal sealed class OutboxMessageConfiguration : IEntityTypeConfiguration<Outb
 
 `ProcessOutboxMessagesJob` is a Quartz.NET job that polls the outbox table on a configurable interval. It fetches a batch of unprocessed messages, deserializes each one back into a domain event, and publishes it via MediatR.
 
+%% OutboxMessage row lifecycle
+```mermaid
+stateDiagram-v2
+    [*] --> Unprocessed: INSERT (same tx as entity)
+    Unprocessed --> InFlight: SELECT … FOR UPDATE
+    InFlight --> Processed: handler succeeded
+    InFlight --> Errored: handler threw
+    Processed --> [*]
+    Errored --> [*]
+
+    note right of InFlight
+        Locked for tx duration
+        so a second job
+        cannot pick it up
+    end note
+    note right of Errored
+        processed_on_utc set,
+        error column populated.
+        NOT auto-retried —
+        replay manually.
+    end note
+```
+
 ```csharp
-// src/ForqStudio.Infrastructure/Outbox/ProcessOutboxMessagesJob.cs
+// src/Alcatraz.Infrastructure/Outbox/ProcessOutboxMessagesJob.cs
 [DisallowConcurrentExecution] // prevents overlapping job executions
 internal sealed class ProcessOutboxMessagesJob(
     ISqlConnectionFactory sqlConnectionFactory,
@@ -458,7 +460,7 @@ A failed message will have `processed_on_utc` set and a non-null `error`. It wil
 Handlers are the final destination of a domain event. They implement MediatR's `INotificationHandler<TEvent>` and are registered automatically via assembly scanning. Each handler performs a single side effect: sending an email, updating a read model, triggering another workflow, etc.
 
 ```csharp
-// src/ForqStudio.Application/Bookings/ReserveBooking/BookingReservedDomainHandler.cs
+// src/Alcatraz.Application/Bookings/ReserveBooking/BookingReservedDomainHandler.cs
 internal sealed record BookingReservedDomainHandler(
     IBookingRepository bookingRepository,
     IUserRepository userRepository,
@@ -501,7 +503,7 @@ internal sealed record BookingReservedDomainHandler(
 The polling interval and batch size are externally configurable:
 
 ```csharp
-// src/ForqStudio.Infrastructure/Outbox/OutboxOptions.cs
+// src/Alcatraz.Infrastructure/Outbox/OutboxOptions.cs
 public sealed class OutboxOptions
 {
     public int IntervalInSeconds { get; init; }
@@ -513,7 +515,7 @@ public sealed class OutboxOptions
 ### appsettings
 
 ```json
-// src/ForqStudio.Api/appsettings.Development.json
+// src/Alcatraz.Api/appsettings.Development.json
 {
   "Outbox": {
     "IntervalInSeconds": 10,
@@ -527,7 +529,7 @@ public sealed class OutboxOptions
 `ProcessOutboxMessagesJobSetup` implements `IConfigureOptions<QuartzOptions>`, so it integrates with .NET's options pipeline. The job triggers on a simple repeating schedule driven by `IntervalInSeconds`.
 
 ```csharp
-// src/ForqStudio.Infrastructure/Outbox/ProcessOutboxMessagesJobSetup.cs
+// src/Alcatraz.Infrastructure/Outbox/ProcessOutboxMessagesJobSetup.cs
 public class ProcessOutboxMessagesJobSetup(IOptions<OutboxOptions> outboxOptions)
     : IConfigureOptions<QuartzOptions>
 {
@@ -555,7 +557,7 @@ public class ProcessOutboxMessagesJobSetup(IOptions<OutboxOptions> outboxOptions
 Everything is wired up in `DependencyInjection.cs`:
 
 ```csharp
-// src/ForqStudio.Infrastructure/DependencyInjection.cs
+// src/Alcatraz.Infrastructure/DependencyInjection.cs
 private static void AddBackgroundJobs(IServiceCollection services, IConfiguration configuration)
 {
     services.Configure<OutboxOptions>(configuration.GetSection("Outbox"));

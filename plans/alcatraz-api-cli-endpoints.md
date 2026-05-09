@@ -8,7 +8,7 @@ This plan adds those endpoints. After this round, the CLI can: log in via device
 
 ## Locked-in decisions
 
-- **API proxies Keycloak's device flow.** CLI never knows realm/client_id; secret stays server-side. Reuse the existing `forqstudio-auth-client`.
+- **API proxies Keycloak's device flow.** CLI never knows realm/client_id; secret stays server-side. Reuse the existing `alcatraz-auth-client`.
 - **Aggregate name: `Sandbox`.** Worker term "VM" stays inside the worker; API uses `sandbox`/`sandboxes` everywhere.
 - **Worker dispatch: NATS publish only.** Use existing `vm.spawn` subject + `CreateVirtualMachineInput` payload (`alcatraz.worker/internal/vm/config.go:50-55`). Define `vm.destroy` with `{id}` as a forward contract — worker subscriber is a follow-up.
 - **SSH cert signing: shell out to `ssh-keygen -s`.** `openssh-client` binary in the API container, no hand-rolled wire format.
@@ -28,7 +28,7 @@ This plan adds those endpoints. After this round, the CLI can: log in via device
 
 ## Domain model
 
-`src/ForqStudio.Domain/Sandboxes/`:
+`src/Alcatraz.Domain/Sandboxes/`:
 
 ```csharp
 public sealed class Sandbox : Entity
@@ -62,7 +62,7 @@ Domain events (raised in aggregate, dispatched post-commit by the existing outbo
 
 ## Application layer
 
-`src/ForqStudio.Application/`:
+`src/Alcatraz.Application/`:
 
 - `Abstractions/Authentication/IDeviceAuthorizationClient.cs` — `InitiateAsync`, `ExchangeAsync(deviceCode)`. Both return `Result<T>`. Exchange propagates RFC 8628 errors as `Auth.Device.AuthorizationPending`, `…SlowDown`, `…ExpiredToken`, `…AccessDenied`.
 - `Abstractions/Messaging/ISandboxEventPublisher.cs` — `PublishSpawnAsync(id, ownerUserId, vcpus, memoryMib, ct)`, `PublishDestroyAsync(id, ct)`.
@@ -78,7 +78,7 @@ Validation rules:
 
 ## Infrastructure
 
-`src/ForqStudio.Infrastructure/`:
+`src/Alcatraz.Infrastructure/`:
 
 - **Authentication/`KeycloakDeviceAuthorizationClient.cs`** — `IDeviceAuthorizationClient` impl over `HttpClient`. Form-encoded POST to `<BaseUrl>/realms/<Realm>/protocol/openid-connect/auth/device` (with `client_id` + `client_secret` from existing `KeycloakOptions`); token exchange to existing `TokenUrl` with `grant_type=urn:ietf:params:oauth:grant-type:device_code`. Maps Keycloak's `error` field to stable `Result.Error` codes.
 - **Messaging/`NatsConnectionFactory.cs`** — singleton wrapper over `NATS.Net` (`NatsConnection`).
@@ -96,7 +96,7 @@ Validation rules:
 
 ## API layer
 
-`src/ForqStudio.Api/Controllers/`:
+`src/Alcatraz.Api/Controllers/`:
 
 - **Auth/`AuthController.cs`** — `[AllowAnonymous]`, two routes above. Maps `Auth.Device.*` errors to 400 + ProblemDetails extension `error`.
 - **Sandboxes/`SandboxesController.cs`** — `[Authorize]`, the five sandbox routes. Returns 201 (create), 202 (delete), 200 (get/list/cert), 404 (`SandboxErrors.NotFound`), 400 (validation).
@@ -112,7 +112,7 @@ DTOs: `CreateSandboxRequest(int Vcpus, int MemoryMib)`, `IssueSshCertificateRequ
   "DeviceAuthorizationUrl": "<BaseUrl>/realms/<Realm>/protocol/openid-connect/auth/device"
 },
 "Nats": {
-  "Url": "nats://forqstudio-nats:4222",
+  "Url": "nats://alcatraz-nats:4222",
   "SpawnSubject": "vm.spawn",
   "DestroySubject": "vm.destroy"
 },
@@ -149,21 +149,21 @@ No customer pubkeys, no cert material — matches the SSH-CA plan's "no persiste
 
 ## Critical files
 
-- New: `src/ForqStudio.Domain/Sandboxes/Sandbox.cs`
-- New: `src/ForqStudio.Application/Sandboxes/IssueSshCertificate/IssueSshCertificateCommandHandler.cs`
-- New: `src/ForqStudio.Infrastructure/Security/SshKeygenCertificateAuthority.cs`
-- New: `src/ForqStudio.Infrastructure/Messaging/NatsSandboxEventPublisher.cs`
-- New: `src/ForqStudio.Infrastructure/Authentication/KeycloakDeviceAuthorizationClient.cs`
-- New: `src/ForqStudio.Api/Controllers/Sandboxes/SandboxesController.cs`
-- New: `src/ForqStudio.Api/Controllers/Auth/AuthController.cs`
-- Modified: `src/ForqStudio.Infrastructure/DependencyInjection.cs`, `src/ForqStudio.Infrastructure/ApplicationDbContext.cs` (auto via `ApplyConfigurationsFromAssembly`), `src/ForqStudio.Infrastructure/ForqStudio.Infrastructure.csproj`
+- New: `src/Alcatraz.Domain/Sandboxes/Sandbox.cs`
+- New: `src/Alcatraz.Application/Sandboxes/IssueSshCertificate/IssueSshCertificateCommandHandler.cs`
+- New: `src/Alcatraz.Infrastructure/Security/SshKeygenCertificateAuthority.cs`
+- New: `src/Alcatraz.Infrastructure/Messaging/NatsSandboxEventPublisher.cs`
+- New: `src/Alcatraz.Infrastructure/Authentication/KeycloakDeviceAuthorizationClient.cs`
+- New: `src/Alcatraz.Api/Controllers/Sandboxes/SandboxesController.cs`
+- New: `src/Alcatraz.Api/Controllers/Auth/AuthController.cs`
+- Modified: `src/Alcatraz.Infrastructure/DependencyInjection.cs`, `src/Alcatraz.Infrastructure/ApplicationDbContext.cs` (auto via `ApplyConfigurationsFromAssembly`), `src/Alcatraz.Infrastructure/Alcatraz.Infrastructure.csproj`
 - Reference: `alcatraz.worker/internal/messaging/config.go:16` (`vm.spawn`), `alcatraz.worker/internal/vm/config.go:50-55` (`CreateVirtualMachineInput` shape), `plans/customer-vm-access-ssh-ca.md` (cert flow source of truth)
 
 ## Tests (deliverable — not optional)
 
 Every endpoint and every domain rule below must ship with tests in this round. xUnit + NSubstitute + FluentAssertions per existing convention.
 
-**Domain unit — `test/ForqStudio.Domain.UnitTests/Sandboxes/SandboxTests.cs`**
+**Domain unit — `test/Alcatraz.Domain.UnitTests/Sandboxes/SandboxTests.cs`**
 - `Request_SetsProvisioningStatus_AndRaisesSandboxRequestedEvent`
 - `MarkDeleting_FromProvisioning_TransitionsToDeleting_AndRaisesEvent`
 - `MarkDeleting_FromRunning_TransitionsToDeleting_AndRaisesEvent`
@@ -172,7 +172,7 @@ Every endpoint and every domain rule below must ship with tests in this round. x
 - `EnsureOwnedBy_WithMatchingUser_ReturnsSuccess`
 - `EnsureOwnedBy_WithDifferentUser_ReturnsNotFound`
 
-**Application unit — `test/ForqStudio.Application.UnitTests/Sandboxes/`**
+**Application unit — `test/Alcatraz.Application.UnitTests/Sandboxes/`**
 - `CreateSandboxCommandHandlerTests`: builds Sandbox with command vcpus/mem + `IUserContext.UserId`; calls `Add` + `SaveChangesAsync`; returns `SandboxResponse`; failure path when `IUserContext` unauthenticated.
 - `DeleteSandboxCommandHandlerTests`: missing sandbox → `NotFound`; ownership mismatch → `NotFound` (not Forbidden — no information leak); already-deleting → `AlreadyDeleting`; happy path raises `MarkDeleting` and saves.
 - `IssueSshCertificateCommandHandlerTests`: ownership check; sandbox in Deleting/Deleted/Failed → `InvalidStateForCertIssue`; happy path invokes `ISshCertificateAuthority.Issue` with principal = sandbox-id string, ttl = 24h, key-id format `<identityId>:<sandboxId>:<unixTs>`; CA failure surfaces as `Result.Failure`.
@@ -181,14 +181,14 @@ Every endpoint and every domain rule below must ship with tests in this round. x
 - `ListSandboxesQueryHandlerTests` / `GetSandboxQueryHandlerTests`: owner-scoped filtering; deleted sandboxes excluded from list; not-yours returns `NotFound`.
 - Validators: one test per validator covering each rule (vcpus bounds, memory bounds + 256 multiple, pubkey prefix allowlist, deviceCode non-empty).
 
-**Application integration — `test/ForqStudio.Application.IntegrationTests/Sandboxes/`** (real Postgres via `WebApplicationFactory`)
+**Application integration — `test/Alcatraz.Application.IntegrationTests/Sandboxes/`** (real Postgres via `WebApplicationFactory`)
 - `CreateSandbox_OnSuccess_WritesSandboxAndOutboxRowInSameTransaction` — assert one row in `sandboxes` and one `OutboxMessage` of type `SandboxRequestedDomainEvent` with matching `SandboxId`.
 - `DeleteSandbox_WritesSandboxDeletionRequestedOutboxRow`.
 - `SandboxRequestedDomainHandler_InvokesPublishSpawn` — substituted `ISandboxEventPublisher` registered through the test factory; verify call args.
 - `SandboxDeletionRequestedDomainHandler_InvokesPublishDestroy`.
 - `NatsSandboxEventPublisher_PayloadShape` — focused unit-style test (no broker) on the JSON serialization: snake_case keys, `id`/`vcpus`/`memory_mib`/`customer_id` present, no extras.
 
-**API functional — `test/ForqStudio.Api.FunctionalTests/`**
+**API functional — `test/Alcatraz.Api.FunctionalTests/`**
 - `Auth/DeviceFlowEndpointsTests.cs`: `POST /auth/device` returns the six required fields; `POST /auth/device/token` happy path returns access token; pending/expired/denied each return 400 with ProblemDetails extension `error` set to the RFC code. `IDeviceAuthorizationClient` substituted via the test factory.
 - `Sandboxes/SandboxesEndpointsTests.cs`:
   - `POST /sandboxes` happy → 201 + body, persisted, outbox row written.
@@ -214,15 +214,15 @@ Every endpoint and every domain rule below must ship with tests in this round. x
 ```bash
 # 1. Bring up infra (consolidated root-level compose; brings up postgres, redis, keycloak, nats, seq, ca-init, demo sshd)
 docker compose up -d
-dotnet ef database update -p alcatraz.api/src/ForqStudio.Infrastructure -s alcatraz.api/src/ForqStudio.Api
+dotnet ef database update -p alcatraz.api/src/Alcatraz.Infrastructure -s alcatraz.api/src/Alcatraz.Api
 
 # 2. Generate CA key, point API at it
 ssh-keygen -t ed25519 -f /tmp/alcatraz_ca -N ""
 export Ssh__CA__PrivateKeyPath=/tmp/alcatraz_ca
-dotnet run --project alcatraz.api/src/ForqStudio.Api &
+dotnet run --project alcatraz.api/src/Alcatraz.Api &
 
 # 3. Keycloak prerequisite: enable "OAuth 2.0 Device Authorization Grant"
-#    on forqstudio-auth-client in the realm's admin UI.
+#    on alcatraz-auth-client in the realm's admin UI.
 
 # 4. Device flow
 curl -sX POST http://localhost:5000/api/v1/auth/device | jq .
@@ -261,4 +261,4 @@ curl -sX DELETE "http://localhost:5000/api/v1/sandboxes/$ID" -H "authorization: 
 - **CA key encryption at rest.** v1 reads from a config-supplied path (mounted Docker secret / KMS-decrypted volume). KMS/Vault integration via an `ISshCaKeyProvider` is a follow-up.
 - **NATS publish-failure handling vs. existing outbox semantics.** The current `ProcessOutboxMessagesJob` marks errored rows as processed; for a hard NATS broker outage we'd lose the spawn signal. Mitigations (retry-on-error sweep job, or buffered publish in `NatsSandboxEventPublisher`) deferred — flag as a known gap.
 - **Cert audit trail.** Issuance is logged but not persisted. Add an `ssh_certificate_issuances` table later if compliance requires it.
-- **Public Keycloak CLI client.** Reusing the confidential `forqstudio-auth-client` is fine because the API holds the secret. If a future client (browser-side, IDE extension) needs direct Keycloak access, mint a separate public `forqstudio-cli` client then.
+- **Public Keycloak CLI client.** Reusing the confidential `alcatraz-auth-client` is fine because the API holds the secret. If a future client (browser-side, IDE extension) needs direct Keycloak access, mint a separate public `alcatraz-cli` client then.

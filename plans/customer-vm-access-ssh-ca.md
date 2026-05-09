@@ -26,40 +26,39 @@ The objective is **secure customer → Firecracker connection**. Customer accoun
 
 ## Architecture
 
+%% SSH-CA system topology
+```mermaid
+flowchart TB
+    subgraph ws["customer workstation"]
+        CLI[alcatraz CLI]
+    end
+
+    Keycloak[(Keycloak<br/>self-hosted OIDC<br/>device grant)]
+
+    subgraph cp["control plane"]
+        API["alcatraz.api<br/>JWT verifier<br/>CA + KRL<br/>VM registry"]
+    end
+
+    GW["alcatraz.gateway<br/>TLS :443<br/>cert verify · KRL"]
+
+    subgraph h1["worker host 1 — alcatraz0 br · L2-isolated"]
+        VA1[VM cust A]
+        VB[VM cust B]
+    end
+    subgraph h2["worker host 2 — alcatraz0 br · L2-isolated"]
+        VC[VM cust C]
+        VA2[VM cust A]
+    end
+
+    CLI -- "device-code flow<br/>(one-time)" --> Keycloak
+    CLI -- "POST /v1/ssh/cert<br/>JWT + pubkey" --> API
+    API -- "short-lived cert" --> CLI
+    CLI -- "ssh over TLS :443" --> GW
+    GW -- "private plane<br/>(wg mesh / VPC)" --> h1
+    GW -- "private plane<br/>(wg mesh / VPC)" --> h2
 ```
-                                  ┌──────────────────┐
-                                  │ Keycloak (self-  │
-                                  │ hosted, OIDC)    │
-                                  └─────────▲────────┘
-                                            │ device code flow
-                                            │ (one-time per workstation)
-   ┌────────────────┐                       │
-   │ customer       │ ─────── login ────────┘
-   │ workstation    │
-   │ (alcatraz CLI) │   POST /v1/ssh/cert  ┌─────────────────────────┐
-   │                │ ────── + JWT ──────► │   alcatraz.api          │
-   │                │ ◄──── short cert ─── │   (CA + VM registry,    │
-   │                │                      │    JWT verifier, KRL)   │
-   │                │  ssh-over-TLS:443    └────────────┬────────────┘
-   │                │ ───────────────────► ┌────────────▼────────────┐
-   └────────────────┘                      │   alcatraz.gateway      │
-                                           │ verifies cert vs CA pub │
-                                           │ + KRL; proxies bytes    │
-                                           └────────────┬────────────┘
-                                                        │ private control + data plane
-                                                        │ (e.g. wg mesh, VPC, private LAN)
-                                                        │
-                                           ┌────────────┴────────────┐
-                                           │                         │
-                                   ┌───────▼────────┐        ┌───────▼────────┐
-                                   │  worker host 1 │        │  worker host 2 │
-                                   │  alcatraz0 br  │        │  alcatraz0 br  │
-                                   │   ├─ VM (cust A)│       │   ├─ VM (cust C)│
-                                   │   └─ VM (cust B)│       │   └─ VM (cust A)│
-                                   │  L2-isolated   │        │  L2-isolated   │
-                                   │  sshd: TrustedUserCAKeys + RevokedKeys   │
-                                   └────────────────┘        └────────────────┘
-```
+
+VMs run sshd with `TrustedUserCAKeys`, `AuthorizedPrincipalsFile`, and `RevokedKeys`; the public-facing surface is a single TLS endpoint at the gateway.
 
 **Components:**
 
@@ -97,6 +96,33 @@ The objective is **secure customer → Firecracker connection**. Customer accoun
 3. CLI generates a long-lived workstation keypair (`~/.config/alcatraz/id_alcatraz`, ed25519) on first use. The pubkey only ever leaves the workstation inside short-lived cert-signing requests.
 
 ### Connection (per SSH session)
+
+%% Cert fetch + ssh-over-TLS via gateway, dual cert verification
+```mermaid
+sequenceDiagram
+    actor Customer
+    participant CLI as alcatraz CLI
+    participant API as alcatraz.api
+    participant GW as alcatraz.gateway
+    participant SSHD as VM sshd
+
+    Customer->>CLI: alcatraz ssh vm-abc123
+    Note over CLI: silent token refresh →<br/>fresh access_token
+    CLI->>API: POST /v1/ssh/cert<br/>JWT + ssh_pubkey
+    Note over API: validate JWT vs JWKS<br/>(iss, aud, exp)<br/>verify sub owns vm-abc123
+    Note over API: ssh-keygen -s ca<br/>-I sub:vm:ts<br/>-n vm-abc123 -V +24h
+    API-->>CLI: cert, valid_until
+    Note over API: pubkey discarded —<br/>never persisted
+
+    CLI->>GW: openssl s_client -connect ssh.alcatraz.io:443<br/>(SSH over TLS via ProxyCommand)
+    Note over GW: read cert from SSH user-auth<br/>verify CA sig vs cached alcatraz_ca.pub<br/>check expiry · check KRL<br/>cert principal == ssh username
+    GW->>API: lookup endpoint for vm-abc123
+    API-->>GW: worker_host, vm_ip, ssh_user, ssh_port
+    GW->>SSHD: dial worker_host:vm_ip:22<br/>over private plane
+
+    Note over SSHD: independently verify cert vs<br/>/etc/ssh/alcatraz_ca.pub<br/>auth_principals/al == vm-abc123<br/>RevokedKeys (KRL)
+    SSHD-->>Customer: shell
+```
 
 1. Customer runs `alcatraz ssh vm-abc123` (or, equivalently, configures `Match`/`ProxyCommand` blocks in `~/.ssh/config` that invoke a CLI shim for the cert fetch).
 2. CLI silently exchanges the cached refresh token for a Keycloak access token, then calls `POST /v1/ssh/cert` on `alcatraz.api` with `Authorization: Bearer <access_token>` and body `{vm_id, ssh_pubkey}`.

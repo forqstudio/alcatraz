@@ -97,7 +97,7 @@ Local development is orchestrated by the repo-root [`docker-compose.yml`](../doc
 ```bash
 cd ..                       # from alcatraz.api/, go up to the repo root
 docker compose up -d --build
-docker compose logs -f forqstudio.api  # wait for "Now listening on: http://[::]:8080"
+docker compose logs -f alcatraz.api  # wait for "Now listening on: http://[::]:8080"
 ```
 
 This brings up the API plus Keycloak, Postgres, Redis, NATS, Seq, and a one-shot container that generates the SSH CA into a shared volume. `alcatraz.worker` runs on the host (out of compose) and connects to NATS at `localhost:4222`; `alcatraz.cli` is built locally with `dotnet`. Two optional profiles: `--profile gateway` (Traefik + `alcatraz.routes` for public TLS ingress) and `--profile demo-sshd` (legacy Alpine sshd stand-in for cert-pipeline testing without a worker).
@@ -110,18 +110,18 @@ For the full register → device login → create sandbox → fetch cert → SSH
 
 ```
 src/
-├── ForqStudio.Domain/             # aggregates (Sandbox, User), domain events, errors, repository interfaces
-├── ForqStudio.Application/        # use cases — commands, queries, validators, handlers
+├── Alcatraz.Domain/             # aggregates (Sandbox, User), domain events, errors, repository interfaces
+├── Alcatraz.Application/        # use cases — commands, queries, validators, handlers
 │   ├── Auth/                      # InitiateDeviceAuth, ExchangeDeviceToken
 │   ├── Sandboxes/                 # CreateSandbox, DeleteSandbox, GetSandbox, ListSandboxes, IssueSshCertificate, MarkSandboxRunning
 │   └── Users/                     # Register, Login, GetLoggedInUser
-├── ForqStudio.Infrastructure/     # EF Core, Keycloak clients, NATS publisher, ssh-keygen CA, Quartz outbox
-└── ForqStudio.Api/                # controllers, middleware, DI composition, appsettings
+├── Alcatraz.Infrastructure/     # EF Core, Keycloak clients, NATS publisher, ssh-keygen CA, Quartz outbox
+└── Alcatraz.Api/                # controllers, middleware, DI composition, appsettings
 test/
-├── ForqStudio.Domain.UnitTests/
-├── ForqStudio.Application.UnitTests/
-├── ForqStudio.Application.IntegrationTests/   # real Postgres via Testcontainers
-└── ForqStudio.Api.FunctionalTests/            # WebApplicationFactory + real Keycloak
+├── Alcatraz.Domain.UnitTests/
+├── Alcatraz.Application.UnitTests/
+├── Alcatraz.Application.IntegrationTests/   # real Postgres via Testcontainers
+└── Alcatraz.Api.FunctionalTests/            # WebApplicationFactory + real Keycloak
 ```
 
 ---

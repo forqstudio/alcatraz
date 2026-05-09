@@ -19,31 +19,31 @@ The same code paths support a local-only dev mode (no Traefik, CLI talks directl
 ### Phase 1 — Worker → API readiness pipeline
 
 #### 1.1 Domain — `Sandbox.MarkRunning` + endpoint fields
-- `alcatraz.api/src/ForqStudio.Domain/Sandboxes/Sandbox.cs`
+- `alcatraz.api/src/Alcatraz.Domain/Sandboxes/Sandbox.cs`
   - Add private-setter properties `string? Host`, `int? Port`.
   - `Result MarkRunning(string host, int port, DateTime utcNow)` — requires `Status == Provisioning`, sets host/port, transitions to `Running`, raises `SandboxBecameRunningDomainEvent`.
   - Tighten `CanIssueCertificate()` to `Status == Running` (cleaner invariant; CLI polls until Running).
-- `alcatraz.api/src/ForqStudio.Domain/Sandboxes/SandboxErrors.cs` — add `NotProvisioning`, `NotReady`.
-- `alcatraz.api/src/ForqStudio.Domain/Sandboxes/Events/SandboxBecameRunningDomainEvent.cs` *(new)*.
-- `alcatraz.api/src/ForqStudio.Infrastructure/Configurations/SandboxConfiguration.cs` — map `host` (nullable text), `port` (nullable int).
-- EF migration: `dotnet ef migrations add Add_Sandbox_Endpoint --project src/ForqStudio.Infrastructure --startup-project src/ForqStudio.Api`. Applied on startup in Development via `app.ApplyMigrations()`.
+- `alcatraz.api/src/Alcatraz.Domain/Sandboxes/SandboxErrors.cs` — add `NotProvisioning`, `NotReady`.
+- `alcatraz.api/src/Alcatraz.Domain/Sandboxes/Events/SandboxBecameRunningDomainEvent.cs` *(new)*.
+- `alcatraz.api/src/Alcatraz.Infrastructure/Configurations/SandboxConfiguration.cs` — map `host` (nullable text), `port` (nullable int).
+- EF migration: `dotnet ef migrations add Add_Sandbox_Endpoint --project src/Alcatraz.Infrastructure --startup-project src/Alcatraz.Api`. Applied on startup in Development via `app.ApplyMigrations()`.
 
 #### 1.2 Application — `MarkSandboxRunningCommand`
-- `alcatraz.api/src/ForqStudio.Application/Sandboxes/MarkSandboxRunning/`
+- `alcatraz.api/src/Alcatraz.Application/Sandboxes/MarkSandboxRunning/`
   - `MarkSandboxRunningCommand.cs` — `record MarkSandboxRunningCommand(Guid SandboxId, string Host, int Port) : ICommand`.
   - `MarkSandboxRunningCommandHandler.cs` — load sandbox, call `MarkRunning`, `SaveChangesAsync`. Idempotent on retry.
   - `MarkSandboxRunningCommandValidator.cs` — `SandboxId` non-empty, `Host` non-empty, `Port` in [1, 65535].
 
 #### 1.3 Cert handler — return gateway-or-sandbox endpoint
-- `alcatraz.api/src/ForqStudio.Application/Sandboxes/IssueSshCertificate/IssueSshCertificateCommandHandler.cs`
+- `alcatraz.api/src/Alcatraz.Application/Sandboxes/IssueSshCertificate/IssueSshCertificateCommandHandler.cs`
   - Keep `IOptions<GatewayOptions>` injection.
   - Logic: if `gatewayOptions.Host` is non-empty, return `(gatewayOptions.Host, gatewayOptions.Port)` (production via Traefik). Otherwise return `(sandbox.Host!, sandbox.Port!)` (local dev). Both branches require `Status == Running` so endpoint is set.
   - Wire field names `GatewayHost`/`GatewayPort` stay — CLI is unchanged on the wire.
 
 #### 1.4 Infrastructure — NATS consumer for `vm.ready`
-- `alcatraz.api/src/ForqStudio.Infrastructure/Messaging/NatsOptions.cs` — add `ReadySubject = "vm.ready"`, `ReadyQueueGroup = "api-vm-ready"`.
-- `alcatraz.api/src/ForqStudio.Infrastructure/Messaging/VmReadyConsumer.cs` *(new)* — `BackgroundService`. Gets connection from `NatsConnectionFactory`, `await foreach` over `connection.SubscribeAsync<byte[]>(subject, queueGroup: ..., ct)`. Per message: deserialize `{id, host, port}` (snake_case), create scope from `IServiceScopeFactory`, dispatch `MarkSandboxRunningCommand` via `ISender`. Logs failures, never crashes the loop.
-- `alcatraz.api/src/ForqStudio.Infrastructure/DependencyInjection.cs` — `services.AddHostedService<VmReadyConsumer>();` in `AddSandboxIntegrations`.
+- `alcatraz.api/src/Alcatraz.Infrastructure/Messaging/NatsOptions.cs` — add `ReadySubject = "vm.ready"`, `ReadyQueueGroup = "api-vm-ready"`.
+- `alcatraz.api/src/Alcatraz.Infrastructure/Messaging/VmReadyConsumer.cs` *(new)* — `BackgroundService`. Gets connection from `NatsConnectionFactory`, `await foreach` over `connection.SubscribeAsync<byte[]>(subject, queueGroup: ..., ct)`. Per message: deserialize `{id, host, port}` (snake_case), create scope from `IServiceScopeFactory`, dispatch `MarkSandboxRunningCommand` via `ISender`. Logs failures, never crashes the loop.
+- `alcatraz.api/src/Alcatraz.Infrastructure/DependencyInjection.cs` — `services.AddHostedService<VmReadyConsumer>();` in `AddSandboxIntegrations`.
 
 #### 1.5 Worker — overlay writes (auth_principals + CA pubkey)
 - `alcatraz.worker/internal/vm/agentfs/overlay.go` — add method on `*OverlayHandle`:
@@ -81,7 +81,7 @@ The same code paths support a local-only dev mode (no Traefik, CLI talks directl
 #### 2.1 Traefik as a compose service
 - Add to `docker-compose.yml`, gated behind a `gateway` profile so local dev doesn't pull it in:
   ```yaml
-  forqstudio-traefik:
+  alcatraz-traefik:
     image: traefik:3.1
     profiles: ["gateway"]
     network_mode: host          # so it can dial 172.16.0.0/24 on the worker host
@@ -153,16 +153,16 @@ alcatraz.routes/
   All sandboxes share the same single ACME cert for `ssh.alcatraz.io` (the `domains` block under each router pins ACME to that name regardless of SNI). Traefik serves that cert by default; openssl s_client doesn't enforce SAN match against SNI in `s_client` mode, so this works cleanly for the SSH-over-TLS path. (Future hardening: switch to wildcard `*.ssh.alcatraz.io` via DNS-01 ACME and use `<id>.ssh.alcatraz.io` SNI. Out of scope for now.)
 - Compose service:
   ```yaml
-  forqstudio-routes:
+  alcatraz-routes:
     build: ./alcatraz.routes
     profiles: ["gateway"]
     environment:
-      NATS_URL: nats://forqstudio-nats:4222
+      NATS_URL: nats://alcatraz-nats:4222
       OUTPUT_PATH: /output/sandboxes.yml
       GATEWAY_DOMAIN: ssh.alcatraz.io
     volumes:
       - traefik_dynamic:/output
-    depends_on: [forqstudio-nats]
+    depends_on: [alcatraz-nats]
     restart: unless-stopped
   ```
 - Atomic write: write to `sandboxes.yml.tmp` then `os.Rename` so Traefik never reads a half-written file.
@@ -197,10 +197,10 @@ Read `alcatraz.core/build-rootfs.sh` and the rootfs's `sshd_config` template. If
 
 | Concern | File |
 |---|---|
-| Domain transition + endpoint storage | `alcatraz.api/src/ForqStudio.Domain/Sandboxes/Sandbox.cs` |
-| EF mapping | `alcatraz.api/src/ForqStudio.Infrastructure/Configurations/SandboxConfiguration.cs` |
-| Inbound NATS consumer (API) | `alcatraz.api/src/ForqStudio.Infrastructure/Messaging/VmReadyConsumer.cs` *(new)* |
-| Cert response sourcing | `alcatraz.api/src/ForqStudio.Application/Sandboxes/IssueSshCertificate/IssueSshCertificateCommandHandler.cs` |
+| Domain transition + endpoint storage | `alcatraz.api/src/Alcatraz.Domain/Sandboxes/Sandbox.cs` |
+| EF mapping | `alcatraz.api/src/Alcatraz.Infrastructure/Configurations/SandboxConfiguration.cs` |
+| Inbound NATS consumer (API) | `alcatraz.api/src/Alcatraz.Infrastructure/Messaging/VmReadyConsumer.cs` *(new)* |
+| Cert response sourcing | `alcatraz.api/src/Alcatraz.Application/Sandboxes/IssueSshCertificate/IssueSshCertificateCommandHandler.cs` |
 | Overlay file write helper | `alcatraz.worker/internal/vm/agentfs/overlay.go` |
 | Worker spawn (overlay writes + ready/destroyed publish) | `alcatraz.worker/internal/vm/spawn.go` |
 | Worker NATS publisher | `alcatraz.worker/internal/messaging/publisher.go` *(new)* |

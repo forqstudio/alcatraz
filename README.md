@@ -12,41 +12,6 @@ Customers spin up isolated, ephemeral Linux sandboxes from a CLI, get a short-li
 - **Multi-host NATS-driven worker pool** with a Keycloak-backed control plane.
 - **Public TLS ingress via Traefik** with SNI-based routing to per-sandbox VMs (production deployment).
 
-## Architecture
-
-```
-     ┌───────────────────────┐
-     │      alcatraz.cli     │  customer's terminal
-     └──────────┬────────────┘
-                │ HTTPS (control)         ssh -o ProxyCommand=openssl s_client …
-                ▼                                       │
-     ┌───────────────────────┐         ┌──────────────────┐
-     │     alcatraz.api      │ ──→ AuthN ──→ │ Keycloak (IdP)   │
-     │  (control plane)      │         └──────────────────┘
-     │  • device flow proxy  │
-     │  • Sandbox aggregate  │ ──→ NATS  vm.spawn / vm.destroy ──▶ alcatraz.worker
-     │  • SSH CA             │ ◀── NATS  vm.ready                  • NATS sub
-     │  • vm.ready consumer  │                                     • CNI bridge
-     └───────────────────────┘                                     • AgentFS+NFS
-                                                                   • spawns Firecracker
-                                  NATS  vm.ready / vm.destroyed              │
-                                          │                                  ▼
-                                          ▼                       ┌──────────────────┐
-                                 ┌──────────────────┐             │  alcatraz.core   │
-                                 │ alcatraz.routes  │             │  (Firecracker VM)│
-                                 │ • NATS sub       │             │  Ubuntu + sshd   │
-                                 │ • writes Traefik │             │  trusts API's CA │
-                                 │   dynamic.yml    │             └────────┬─────────┘
-                                 └──────────┬───────┘                      │
-                                            │ file-watch                   │
-                                            ▼                              │
-                                 ┌──────────────────┐  TCP/SNI splice      │
-       customer ──tls/443──────▶ │  Traefik (:443)  │ ────────────────────▶│
-                                 │ • ACME           │                      │
-                                 │ • SNI = sb-uuid  │                 sshd in VM
-                                 └──────────────────┘
-```
-
 ## Components
 
 Each component owns one slice of the customer's path from `alcatraz login` to a shell inside a sandbox.
@@ -89,6 +54,80 @@ Each component owns one slice of the customer's path from `alcatraz login` to a 
 
 ## End-to-end request lifecycle
 
+%% Customer login → spawn → cert → connect → delete
+```mermaid
+sequenceDiagram
+    actor User
+    participant CLI as alcatraz.cli
+    participant API as alcatraz.api
+    participant Keycloak
+    participant NATS
+    participant Worker as alcatraz.worker
+    participant Routes as alcatraz.routes
+    participant Traefik
+    participant VM as VM sshd
+
+    %% Login
+    User->>CLI: alcatraz login
+    CLI->>API: POST /auth/device
+    API->>Keycloak: device_authorization
+    Keycloak-->>API: device_code, user_code
+    API-->>CLI: device_code, user_code
+    CLI-->>User: open verification_uri, enter user_code
+    loop poll every interval
+        CLI->>API: POST /auth/device/token
+        API->>Keycloak: token (grant=device_code)
+    end
+    Keycloak-->>API: access_token
+    API-->>CLI: tokens
+
+    %% Create sandbox
+    User->>CLI: alcatraz sandbox create
+    CLI->>API: POST /sandboxes (Bearer JWT)
+    Note over API: insert Sandbox row +<br/>SandboxRequested outbox row<br/>(one DB tx)
+    API-->>CLI: 201 Provisioning
+
+    %% Spawn
+    Note over API,NATS: Quartz drains outbox
+    API->>NATS: vm.spawn
+    NATS->>Worker: vm.spawn
+    Note over Worker: AgentFS overlay,<br/>plant trusted_user_ca_keys +<br/>auth_principals/al
+    Worker->>VM: boot Firecracker
+
+    %% Ready
+    Worker->>VM: probe :22 until sshd ready
+    Worker->>NATS: vm.ready {id, host, port}
+    NATS-->>API: vm.ready
+    Note over API: MarkSandboxRunning(host, port)
+    NATS-->>Routes: vm.ready
+    Routes->>Traefik: write dynamic.yml
+
+    %% Get a cert
+    User->>CLI: alcatraz ssh <id>
+    CLI->>API: GET /sandboxes/<id> (poll)
+    API-->>CLI: Running
+    CLI->>CLI: generate ed25519 keypair
+    CLI->>API: POST /sandboxes/<id>/ssh-cert {pubkey}
+    Note over API: ssh-keygen -s → 24h cert,<br/>principal = sandbox-UUID
+    API-->>CLI: {cert, validUntilUtc, host, port}
+
+    %% Connect
+    CLI->>Traefik: openssl s_client (SNI = sandbox-UUID)
+    Traefik->>VM: TCP splice
+    Note over VM: validate cert vs<br/>trusted_user_ca_keys +<br/>auth_principals/al
+    VM-->>User: shell
+
+    %% Delete
+    User->>CLI: alcatraz sandbox delete <id>
+    CLI->>API: DELETE /sandboxes/<id>
+    API->>NATS: vm.destroy
+    NATS->>Worker: vm.destroy
+    Worker->>VM: stop, tear down CNI/NFS
+    Worker->>NATS: vm.destroyed
+    NATS-->>Routes: vm.destroyed
+    Routes->>Traefik: remove route
+```
+
 1. **Login.** CLI runs `alcatraz login`. The API initiates Keycloak's OAuth 2.0 device flow; the user signs in once in a browser. The CLI gets a JWT access token. The CLI never sees Keycloak's realm, client_id, or secret.
 2. **Create sandbox.** CLI runs `alcatraz sandbox create`. The API persists a `Sandbox` row in `Provisioning` and writes a `SandboxRequested` outbox message in the same DB transaction.
 3. **Spawn.** A Quartz job drains the outbox and publishes `vm.spawn` on NATS. A worker in the queue group claims the message, allocates a slot, prepares an AgentFS overlay, plants `/etc/ssh/auth_principals/al` (sandbox UUID) and `/etc/ssh/trusted_user_ca_keys` (API CA pubkey) into the overlay, starts an in-process NFSv3 server, and boots Firecracker.
@@ -103,7 +142,7 @@ A single root-level [`docker-compose.yml`](docker-compose.yml) brings up the con
 
 Two profiles:
 
-- **default** (no profile flag): everything except Traefik, `alcatraz.routes`, and `forqstudio-demo-sshd`. CLI talks directly to the worker-reported VM IP on the bridge subnet — what you want for development on a single host.
+- **default** (no profile flag): everything except Traefik, `alcatraz.routes`, and `alcatraz-demo-sshd`. CLI talks directly to the worker-reported VM IP on the bridge subnet — what you want for development on a single host.
 - **`--profile gateway`**: also brings up Traefik (`network_mode: host`, ACME on `:443`) and `alcatraz.routes`. What you run on a public host with DNS for `GATEWAY_AUTOCERT_HOST` pointed at it.
 - **`--profile demo-sshd`**: a legacy Alpine `sshd` stand-in container that pre-dates the worker. Useful only if you want to test the cert pipeline without running a worker.
 
@@ -120,7 +159,7 @@ Two profiles:
 ```bash
 # from the repo root
 docker compose up -d --build
-docker compose logs -f forqstudio.api    # wait for "Now listening on: http://[::]:8080"
+docker compose logs -f alcatraz.api    # wait for "Now listening on: http://[::]:8080"
 ```
 
 The first build is slow (multi-stage .NET image). Subsequent runs are fast — drop `--build` unless you've edited `alcatraz.api/src/`, `alcatraz.api/.files/ca-init/`, or compose itself.
@@ -129,13 +168,13 @@ What's running by default:
 
 | Service | Port | Purpose |
 |---|---|---|
-| `forqstudio.api` | `:8080` | Control plane API (also subscribes to `vm.ready`) |
-| `forqstudio-idp` | `:8082` | Keycloak with the `forqstudio` realm pre-imported (device flow enabled) |
-| `forqstudio-db` | `:5432` | Postgres |
-| `forqstudio-redis` | `:6379` | Redis |
-| `forqstudio-nats` | `:4222` (mon `:8222`) | NATS broker |
-| `forqstudio-seq` | `:8083` | Seq log viewer |
-| `forqstudio-ca-init` | — | One-shot: writes the SSH CA key into the shared `alcatraz_ca` volume |
+| `alcatraz.api` | `:8080` | Control plane API (also subscribes to `vm.ready`) |
+| `alcatraz-idp` | `:8082` | Keycloak with the `alcatraz` realm pre-imported (device flow enabled) |
+| `alcatraz-db` | `:5432` | Postgres |
+| `alcatraz-redis` | `:6379` | Redis |
+| `alcatraz-nats` | `:4222` (mon `:8222`) | NATS broker |
+| `alcatraz-seq` | `:8083` | Seq log viewer |
+| `alcatraz-ca-init` | — | One-shot: writes the SSH CA key into the shared `alcatraz_ca` volume |
 
 ### Start the worker
 
@@ -190,7 +229,7 @@ GATEWAY_AUTOCERT_HOST=ssh.alcatraz.io \
 docker compose --profile gateway up -d --build
 
 # Tell the API to put Traefik's address in cert responses
-docker compose exec forqstudio.api sh -c 'export Gateway__Host=ssh.alcatraz.io; export Gateway__Port=443'  # or set in env
+docker compose exec alcatraz.api sh -c 'export Gateway__Host=ssh.alcatraz.io; export Gateway__Port=443'  # or set in env
 
 # Worker as before
 sudo -E ./alcatraz.worker/bin/alcatraz-worker
@@ -209,7 +248,7 @@ You **must** wipe volumes if you change the realm export — Keycloak only impor
 
 ### Per-component notes
 
-- [`alcatraz.api/README.md`](alcatraz.api/README.md) — control plane (`forqstudio.api` in compose).
+- [`alcatraz.api/README.md`](alcatraz.api/README.md) — control plane (`alcatraz.api` in compose).
 - [`alcatraz.worker/README.md`](alcatraz.worker/README.md) — NATS subscriber + Firecracker, host-run (KVM + CNI).
 - [`alcatraz.core/README.md`](alcatraz.core/README.md) — kernel and Ubuntu rootfs build.
 - [`alcatraz.cli/README.md`](alcatraz.cli/README.md) — customer CLI.
