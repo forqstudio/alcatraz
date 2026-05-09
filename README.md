@@ -334,6 +334,7 @@ alcatraz/
 ├── alcatraz.core/     # Firecracker kernel/rootfs build scripts and launchers
 ├── alcatraz.worker/   # Go worker: NATS sub/pub + CNI + AgentFS/NFS + Firecracker SDK (host-run)
 ├── alcatraz.routes/   # Go service: NATS → Traefik dynamic-config publisher
+├── third_party/      # vendored, lightly patched copies of upstream Go modules — see third_party/README.md
 └── plans/             # cross-component design docs
 ```
 

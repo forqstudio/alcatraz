@@ -1,49 +1,40 @@
 {
-    "name": "firecracker-agentfs",
+    "name": "alcatraz",
     "build": {
-        "context": ".",
+        "context": "..",
         "dockerfile": ".devcontainer/Dockerfile"
     },
     "remoteUser": "vscode",
-    "workspaceFolder": "/home/vscode/workspaces/firecracker-agentfs",
-    "workspaceMount": "source=${localWorkspaceFolder},target=/home/vscode/workspaces/firecracker-agentfs,type=bind",
-    "runArgs": [
-        "--device=/dev/kvm:/dev/kvm",
-        "--cap-add=SYS_ADMIN",
-        "--privileged",
-        "--memory=4g",
-        "--cpus=2"
-    ],
+    "workspaceFolder": "/workspaces/alcatraz",
+    "workspaceMount": "source=${localWorkspaceFolder},target=/workspaces/alcatraz,type=bind,consistency=cached",
     "customizations": {
         "vscode": {
             "extensions": [
-                "ms-vscode.shell-syntax",
+                "ms-dotnettools.csharp",
+                "ms-dotnettools.csdevkit",
+                "golang.go",
+                "ms-azuretools.vscode-docker",
                 "ms-vscode.makefile-tools",
                 "redhat.vscode-yaml",
-                "ms-python.python",
                 "esbenp.prettier-vscode",
-                "davidanson.vscode-markdownlint"
+                "davidanson.vscode-markdownlint",
+                "timonwong.shellcheck"
             ],
             "settings": {
                 "terminal.integrated.defaultProfile.linux": "bash",
                 "files.eol": "\n",
                 "files.trimTrailingWhitespace": true,
                 "editor.formatOnSave": true,
-                "bash-debug.configuration.bashPath": "/usr/bin/bash",
                 "[shellscript]": {
                     "editor.defaultFormatter": "esbenp.prettier-vscode"
-                }
+                },
+                "go.toolsManagement.autoUpdate": true
             }
         }
     },
-    "forwardPorts": [],
-    "postCreateCommand": "echo 'Dev container ready! Firecracker: $FIRECRACKER_PATH, AgentFS: $AGENTFS_PATH, opencode: $OPCODE_PATH'",
+    "postCreateCommand": "bash .devcontainer/postCreate.sh",
     "containerEnv": {
-        "FIRECRACKER_PATH": "/usr/local/bin/firecracker",
-        "AGENTFS_PATH": "/usr/local/bin/agentfs",
-        "OPCODE_PATH": "/usr/local/bin/opencode",
-        "FIRECRACKER_VERSION": "v1.15.1",
-        "AGENTFS_VERSION": "0.6.4",
-        "AGENTFS_DB_PATH": "/home/vscode/.agentfs"
+        "DOTNET_CLI_TELEMETRY_OPTOUT": "1",
+        "DOTNET_NOLOGO": "1"
     }
 }

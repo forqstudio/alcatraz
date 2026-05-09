@@ -1,63 +1,28 @@
-FROM ubuntu:24.04
+FROM mcr.microsoft.com/devcontainers/base:ubuntu-24.04
 
-# Metadata for better tracking and reproducibility
-LABEL maintainer="Firecracker AgentFS Project"
-LABEL description="Dev container for Firecracker microVM with AgentFS"
-LABEL version="1.0.0"
+LABEL maintainer="Alcatraz Project"
+LABEL description="Dev container for the Alcatraz platform (.NET 8 + Go 1.25 + kernel/rootfs build deps)"
+LABEL version="2.0.0"
 
-ARG USERNAME=vscode
-ARG USER_UID=1000
-ARG USER_GID=1000
+ARG GO_VERSION=1.25.3
+ARG DEBIAN_FRONTEND=noninteractive
 
-RUN apt-get update && apt-get install -y \
-    build-essential flex bison libssl-dev libelf-dev bc kmod cpio rsync tar xz-utils curl git sudo \
-    libkmod-dev pkg-config llvm-dev \
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        build-essential bc bison flex cpio kmod libelf-dev libssl-dev rsync tar xz-utils \
+        ca-certificates curl wget gpg debootstrap shellcheck \
+        git sudo jq openssh-client iproute2 iputils-ping unzip make pkg-config \
+        dotnet-sdk-8.0 \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Rust toolchain
-RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y \
-    && . "$HOME/.cargo/env" \
-    && rustup default stable \
-    && cargo --version \
-    && rustc --version
+RUN curl -fsSL "https://go.dev/dl/go${GO_VERSION}.linux-amd64.tar.gz" \
+        | tar -C /usr/local -xz \
+ && printf 'export PATH=$PATH:/usr/local/go/bin:$HOME/go/bin\nexport GOPATH=$HOME/go\n' \
+        > /etc/profile.d/go.sh \
+ && chmod 0644 /etc/profile.d/go.sh
 
-# Ensure cargo is available in PATH for all users
-ENV PATH="/root/.cargo/bin:${PATH}"
+ENV PATH=/usr/local/go/bin:/home/vscode/go/bin:${PATH} \
+    GOPATH=/home/vscode/go \
+    DOTNET_CLI_TELEMETRY_OPTOUT=1 \
+    DOTNET_NOLOGO=1
 
-RUN groupadd -g ${USER_GID} ${USERNAME} \
-    && useradd -m -u ${USER_UID} -g ${USERNAME} -G kvm,sudo ${USERNAME}
-
-RUN curl -L --connect-timeout 10 -o /tmp/firecracker.tgz "https://github.com/firecracker-microvm/firecracker/releases/download/v1.15.1/firecracker-v1.15.1-x86_64.tgz" \
-    && tar xf /tmp/firecracker.tgz -C /tmp \
-    && mv "/tmp/release-v1.15.1-x86_64/firecracker-v1.15.1-x86_64" /usr/local/bin/firecracker \
-    && rm -rf /tmp/release-* /tmp/firecracker.tgz \
-    && chmod +x /usr/local/bin/firecracker
-
-# Install AgentFS - properly install the Rust binary
-RUN cargo install agentfs \
-    && mv ~/.cargo/bin/agentfs /usr/local/bin/agentfs \
-    && chmod +x /usr/local/bin/agentfs \
-    && agentfs --version
-
-# Install opencode - AI-powered coding assistant
-RUN curl -fsSL https://api.opencode.ai/install | sh \
-    && mv ~/.local/bin/opencode /usr/local/bin/opencode \
-    && chmod +x /usr/local/bin/opencode \
-    && opencode --version
-
-
-
-# Set up environment variables for the project
-ENV FIRECRACKER_PATH="/usr/local/bin/firecracker"
-ENV AGENTFS_PATH="/usr/local/bin/agentfs"
-ENV OPCODE_PATH="/usr/local/bin/opencode"
-ENV FIRECRACKER_VERSION="v1.15.1"
-ENV AGENTFS_VERSION="0.6.4"
-ENV AGENTFS_DB_PATH="/home/${USERNAME}/.agentfs"
-
-
-COPY --chown=${USERNAME}:${USERNAME} . /home/${USERNAME}/workspaces/firecracker-agentfs
-
-WORKDIR /home/${USERNAME}/workspaces/firecracker-agentfs
-
-USER ${USERNAME}
+USER vscode

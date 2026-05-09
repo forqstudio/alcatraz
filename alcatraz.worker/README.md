@@ -11,7 +11,7 @@ This repository contains the build and launch scripts only. Generated artifacts 
 - NATS: `2.10` (with JetStream)
 - Seq: `2024.3` (structured log viewer; receives CLEF events from the worker)
 - Firecracker target: `v1.15.1`
-- AgentFS: in-process via the Go SDK (`github.com/tursodatabase/agentfs/sdk/go`); no `agentfs` CLI binary required
+- AgentFS: in-process via the Go SDK (`github.com/tursodatabase/agentfs/sdk/go`); no `agentfs` CLI binary required. The SDK is vendored at `third_party/agentfs-sdk-go/` with one local patch (overlay parent-dir copy-up) — see [`third_party/agentfs-sdk-go/UPSTREAM.md`](../third_party/agentfs-sdk-go/UPSTREAM.md) for why and how to bump it.
 - NFSv3 server: in-process via `github.com/willscott/go-nfs`
 - Logging: `log/slog` (stdlib) fanned out to stdout + Seq via a small CLEF HTTP handler in `internal/logging`
 
