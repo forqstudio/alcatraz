@@ -1,8 +1,8 @@
 # Alcatraz
 
-A sandboxed environment for letting your coding agents run wild.
+A serverless sandbox platform for AI coding agents.
 
-Customers spin up isolated, ephemeral Linux sandboxes from a CLI, get a short-lived SSH cert, and connect to a Firecracker microVM whose root filesystem is an audited AgentFS overlay. Base image stays clean; per-sandbox changes persist into a SQLite delta you can diff and replay.
+Letting an AI coding agent loose on your laptop is a bad idea. Alcatraz gives each one its own throwaway Linux box in the cloud — spun up from a CLI, hardware-isolated via Firecracker, reachable over SSH with a short-lived certificate. Changes persist into an auditable delta you can diff and replay between runs.
 
 ## What you get
 
