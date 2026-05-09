@@ -15,9 +15,9 @@ A serverless sandbox platform for AI coding agents.
 - [Quick start](#quick-start)
 - [Project structure](#project-structure)
 - [Development guide](#development-guide)
-- [Deployment](#deployment)
 - [Status](#status)
 - [Design references](#design-references)
+- [Deployment](#deployment)
 - [Contributing](#contributing)
 - [License](#license)
 
@@ -193,31 +193,66 @@ sequenceDiagram
 
 ## Quick start
 
-A single root-level [`docker-compose.yml`](docker-compose.yml) brings up the control plane and supporting services. The worker runs on the host (it needs KVM and CNI). The CLI is built locally.
+This walks you from a clean checkout to `alcatraz ssh <id>` on a single Linux host. All commands assume your working directory is the repo root unless noted.
 
-Two profiles:
+The stack splits into three pieces you start in order:
 
-- **default** (no profile flag): everything except Traefik, `alcatraz.routes`, and `alcatraz-demo-sshd`. CLI talks directly to the worker-reported VM IP on the bridge subnet — what you want for development on a single host.
-- **`--profile gateway`**: also brings up Traefik (`network_mode: host`, ACME on `:443`) and `alcatraz.routes`. What you run on a public host with DNS for `GATEWAY_AUTOCERT_HOST` pointed at it.
-- **`--profile demo-sshd`**: a legacy Alpine `sshd` stand-in container that pre-dates the worker. Useful only if you want to test the cert pipeline without running a worker.
+1. **Guest artifacts** — a kernel and a rootfs in `alcatraz.core/`. Built once; reused by every sandbox.
+2. **Control plane** — `alcatraz.api`, Keycloak, Postgres, Redis, NATS, Seq, and the one-shot CA initialiser. All in Docker Compose.
+3. **Worker** — `alcatraz.worker`, host-run because it needs KVM and CNI. Watches NATS, boots Firecracker VMs from the guest artifacts.
+
+The compose file has two optional profiles you don't need for local dev: `--profile gateway` adds Traefik + `alcatraz.routes` for public TLS ingress (covered in [Deployment](#deployment)); `--profile demo-sshd` is a legacy Alpine `sshd` stand-in from before the worker existed.
 
 ### Prerequisites
 
-- Docker Compose
-- `curl`, `jq`, `ssh-keygen`, `ssh` on the host
-- A web browser (one click during device-flow login)
-- .NET 8 SDK to run the CLI (or use `dotnet run --project alcatraz.cli/src/Alcatraz.Cli`)
-- For the worker: KVM, CNI plugins, a built kernel + rootfs in `alcatraz.core/` (see that component's README)
+On the host:
 
-### Bring up the stack
+- Linux with KVM (`grep -E 'vmx|svm' /proc/cpuinfo` returns hits) and `sudo`
+- Docker + Docker Compose
+- Go 1.22+ and `make` (to build the worker)
+- .NET 8 SDK (to build the CLI)
+- `debootstrap`, `iptables`, build tools (kernel + rootfs build)
+- `agentfs` binary on `PATH` (used by the rootfs/launcher and the worker; see [`alcatraz.core/README.md`](alcatraz.core/README.md))
+- `curl`, `jq`, `ssh`, `ssh-keygen`
+- A web browser, for the one-time device-flow login
+
+### 1. Install CNI plugins and config
+
+The worker uses the Firecracker SDK's CNI integration. Install the standard plugins, the Firecracker-specific `tc-redirect-tap`, and the Alcatraz bridge config:
 
 ```bash
-# from the repo root
+# Standard CNI plugins (bridge, host-local, etc.)
+curl -sL https://github.com/containernetworking/plugins/releases/download/v1.0.1/cni-plugins-linux-amd64-v1.0.1.tgz \
+  | sudo tar -xz -C /opt/cni/bin/
+
+# tc-redirect-tap (Firecracker-specific)
+git clone https://github.com/firecracker-microvm/tc-redirect-tap.git /tmp/tc-redirect-tap
+make -C /tmp/tc-redirect-tap && sudo cp /tmp/tc-redirect-tap/tc-redirect-tap /opt/cni/bin/
+
+# Alcatraz bridge conflist
+sudo mkdir -p /etc/cni/net.d
+sudo cp alcatraz.worker/cni/alcatraz-bridge.conflist /etc/cni/net.d/
+```
+
+### 2. Build the guest kernel and rootfs
+
+`alcatraz.core/` builds the Amazon Linux microVM kernel and a Ubuntu 24.04 rootfs that every sandbox boots from. First run takes 15–20 minutes; the artifacts (`alcatraz.core/vmlinux`, `alcatraz.core/rootfs/`) land in the repo and are reused by the worker.
+
+```bash
+sudo -E ./alcatraz.core/build-kernel.sh
+sudo -E ./alcatraz.core/build-rootfs.sh
+```
+
+To smoke-test the artifacts independently of the worker, `sudo -E ./alcatraz.core/run.sh` boots a single Firecracker VM directly with a TAP and NAT — Ctrl-C to stop. Skip this if you just want to get to the CLI.
+
+### 3. Bring up the control plane
+
+```bash
 docker compose up -d --build
 docker compose logs -f alcatraz.api    # wait for "Now listening on: http://[::]:8080", then Ctrl-C
 ```
 
-The first build is slow (multi-stage .NET image). Subsequent runs are fast — drop `--build` unless you've edited `alcatraz.api/src/`, `alcatraz.api/.files/ca-init/`, or compose itself.
+First build is slow (multi-stage .NET image); subsequent runs are fast — drop `--build` unless you've edited `alcatraz.api/src/`, `alcatraz.api/.files/ca-init/`, or compose itself.
 
 What's running by default:
 
@@ -231,57 +266,63 @@ What's running by default:
 | `alcatraz-seq` | `:8083` | Seq log viewer |
 | `alcatraz-ca-init` | — | One-shot: writes the SSH CA key into the shared `alcatraz_ca` volume |
 
-### Start the worker
+### 4. Sync the SSH CA pubkey to the host
 
-The worker is host-run.
-
-**Why the CA pubkey has to be synced first.** `alcatraz.api` is the SSH certificate authority — it holds an ed25519 *private* key (mounted from the `alcatraz_ca` Docker volume) and uses it to sign 24-hour user certificates the CLI presents to a sandbox's `sshd`. For `sshd` to trust those certs, every VM needs the matching *public* key planted in `/etc/ssh/trusted_user_ca_keys` before boot. The worker is the component that writes that file into each per-sandbox overlay — but the worker runs on the host, outside compose, so it can't read the `alcatraz_ca` Docker volume directly. `sync-ca-pubkey.sh` is the bridge: it copies just the public key out of the volume to a path on the host the worker can read.
-
-This is also why Keycloak isn't the SSH CA. Keycloak authenticates the *human* (issuing JWTs the CLI presents to the API). The API authorises the *SSH connection* (issuing OpenSSH certs the CLI presents to `sshd`). `sshd` doesn't speak OAuth — it only validates SSH certs against a trusted CA pubkey, which is exactly what this sync makes available.
-
-**Why `/run`.** `/run` is a Linux convention for *runtime* state — files programs need while running but should never persist across a reboot. On this host (and most modern Linuxes) it's mounted as `tmpfs`, a RAM-backed filesystem, so contents are wiped at boot and never hit disk. That's a good fit for a public key that's cheap to re-derive from the volume, and it means there's no stale on-disk copy to forget about. The cost is that **you must re-run the sync after every host reboot**.
-
-**Why the *worker* fails fast (not the API) when the pubkey is missing.** The API doesn't read the public key — it holds the *private* key and signs certs with it; if the API's private key is missing, the failure is loud and obvious on the first cert request. The worker is the component that writes `trusted_user_ca_keys` into each VM's overlay before boot, so the worker is the only process whose job depends on that file existing on the host. If the worker started without it, every spawn would still *succeed* end-to-end (VM boots, `vm.ready` fires, status flips to `Running`, the API issues a cert), and only the customer's first SSH attempt would fail — silently, with a generic `Permission denied (publickey)`. That's the worst-case failure mode: looks healthy, isn't, customer hits it last. So the worker checks the file at startup and refuses to start if it's missing (`alcatraz.worker/cmd/alcatraz-worker/main.go:38-45`), and the spawn path double-checks it at every claim (`internal/vm/spawn.go:247`).
-
-The script writes to `/run/alcatraz-ca/` and will prompt for sudo.
+The worker plants the API's CA pubkey into every sandbox overlay before boot, but the worker runs on the host (outside compose) so it can't read the `alcatraz_ca` Docker volume directly. This script copies the public half out to a host path the worker can read:
 
 ```bash
-sudo alcatraz.worker/scripts/sync-ca-pubkey.sh
-
-cd alcatraz.worker
-make build
-sudo -E ./bin/alcatraz-worker
+sudo alcatraz.worker/scripts/sync-ca-pubkey.sh   # writes /run/alcatraz-ca/alcatraz_ca.pub
 ```
 
-The worker subscribes to `vm.spawn` and `vm.destroy`, and publishes `vm.ready` / `vm.destroyed` as it boots and tears down VMs.
+**Re-run after every host reboot.** `/run` is `tmpfs`, so the file disappears on reboot. The worker refuses to start if the pubkey is missing — and the spawn path double-checks at every claim — to avoid the worst-case failure mode (everything looks healthy, only the customer's `ssh` fails with a generic `Permission denied (publickey)`).
 
-### End-to-end walkthrough (local, direct-to-VM)
+For the full rationale — why the sync exists at all, why `/run`, why the worker fails fast instead of the API, and why Keycloak isn't the SSH CA — see [`alcatraz.worker/docs/ca-pubkey-sync.md`](alcatraz.worker/docs/ca-pubkey-sync.md).
+
+### 5. Build and start the worker
 
 ```bash
-# 1. Register a user (one-time per stack)
+make -C alcatraz.worker build
+sudo -E ./alcatraz.worker/bin/alcatraz-worker
+```
+
+`sudo` is required for CNI/NAT operations; `-E` preserves env vars (`WORKER_CA_PUBKEY_PATH` defaults to `/run/alcatraz-ca/alcatraz_ca.pub`). The worker subscribes to `vm.spawn` / `vm.destroy` on NATS and publishes `vm.ready` / `vm.destroyed`. Leave it running in the foreground; open a new terminal for the CLI.
+
+### 6. Build and install the CLI
+
+```bash
+./alcatraz.cli/scripts/publish.sh
+sudo ln -sf "$(pwd)/alcatraz.cli/dist/alcatraz" /usr/local/bin/alcatraz
+```
+
+If you'd rather not install globally, substitute `dotnet run --project alcatraz.cli/src/Alcatraz.Cli --` for `alcatraz` in the commands below.
+
+### 7. Register, log in, create a sandbox, and SSH in
+
+```bash
+# Register a user (one-time per stack)
 curl -sX POST http://localhost:8080/api/v1/users/register \
   -H 'content-type: application/json' \
   -d '{"email":"demo@alcatraz.local","firstName":"Demo","lastName":"User","password":"demopass"}'
 
-# 2. Log in via device flow (CLI takes you through it)
-dotnet run --project alcatraz.cli/src/Alcatraz.Cli -- login
+# Device-flow login — the CLI prints a URL and code; sign in in your browser
+alcatraz login
 
-# 3. Create a sandbox
-ID=$(dotnet run --project alcatraz.cli/src/Alcatraz.Cli -- sandbox create --vcpus 2 --memory 2048 --json | jq -r .id)
+# Create a sandbox; the API persists it Provisioning, the worker claims vm.spawn,
+# boots Firecracker, probes :22, and publishes vm.ready
+ID=$(alcatraz sandbox create --vcpus 2 --memory 2048 --json | jq -r .id)
 
-# 4. SSH in. The CLI polls until the worker reports the sandbox Running,
-#    then issues a cert and execs ssh against the bridge IP.
-dotnet run --project alcatraz.cli/src/Alcatraz.Cli -- ssh "$ID"
+# Poll until Running, fetch a 24h cert, exec ssh against the bridge IP
+alcatraz ssh "$ID"
 ```
 
-Inside the VM, confirm the trust chain:
+You'll land in `/workspace` as user `al`. To confirm the trust chain from inside the VM:
 
 ```bash
 cat /etc/ssh/auth_principals/al           # → the sandbox UUID
 cat /etc/ssh/trusted_user_ca_keys         # → the API's CA pubkey
 ```
 
-A `curl`-only verification of the same flow lives at [`alcatraz.api/docs/local-end-to-end.md`](alcatraz.api/docs/local-end-to-end.md).
+Other useful CLI commands: `alcatraz sandbox list`, `alcatraz sandbox delete <id>`. A `curl`-only verification of the same flow (with negative test cases) lives at [`alcatraz.api/docs/local-end-to-end.md`](alcatraz.api/docs/local-end-to-end.md).
 
 ## Project structure
 
@@ -316,6 +357,25 @@ make -C alcatraz.routes test
 ```
 
 The .NET projects (`alcatraz.api`, `alcatraz.cli`) don't ship a test suite yet — exercise them via the end-to-end walkthrough above and the `curl` cases in `alcatraz.api/docs/local-end-to-end.md`.
+
+## Status
+
+**Shipped:**
+
+- `alcatraz.cli`, `alcatraz.api`, `alcatraz.worker`, `alcatraz.core`, `alcatraz.routes` — all five components run end-to-end. The local and `--profile gateway` walkthroughs above are the canonical proof.
+
+**Not yet shipped:**
+
+- KRL-based sub-TTL certificate revocation (today, expiry is the only revocation mechanism).
+- .NET test suite for `alcatraz.api` and `alcatraz.cli`.
+- NATS auth/TLS in the production compose profile.
+
+## Design references
+
+- [`plans/customer-vm-access-ssh-ca.md`](plans/customer-vm-access-ssh-ca.md) — system-of-record for SSH CA, device flow, and gateway architecture.
+- [`plans/alcatraz-api-cli-endpoints.md`](plans/alcatraz-api-cli-endpoints.md) — control-plane endpoint spec.
+- [`plans/alcatraz-cli.md`](plans/alcatraz-cli.md) — CLI implementation plan.
+- [`plans/end-to-end-wrap-up.md`](plans/end-to-end-wrap-up.md) — wrap-up plan covering the worker-reports-back pipeline, overlay writes, Traefik+routes ingress.
 
 ## Deployment
 
@@ -365,25 +425,6 @@ docker compose up -d --build
 ```
 
 You **must** wipe volumes if you change the realm export — Keycloak only imports on first boot. Wiping `alcatraz_ca` regenerates the CA key (invalidates every previously issued cert). Wiping `traefik_acme` forces ACME re-issuance on the next gateway start. The `known_hosts` purge prevents `Host key verification failed` on the next `alcatraz ssh` after a fresh sandbox lands on a previously-used VM IP.
-
-## Status
-
-**Shipped:**
-
-- `alcatraz.cli`, `alcatraz.api`, `alcatraz.worker`, `alcatraz.core`, `alcatraz.routes` — all five components run end-to-end. The local and `--profile gateway` walkthroughs above are the canonical proof.
-
-**Not yet shipped:**
-
-- KRL-based sub-TTL certificate revocation (today, expiry is the only revocation mechanism).
-- .NET test suite for `alcatraz.api` and `alcatraz.cli`.
-- NATS auth/TLS in the production compose profile.
-
-## Design references
-
-- [`plans/customer-vm-access-ssh-ca.md`](plans/customer-vm-access-ssh-ca.md) — system-of-record for SSH CA, device flow, and gateway architecture.
-- [`plans/alcatraz-api-cli-endpoints.md`](plans/alcatraz-api-cli-endpoints.md) — control-plane endpoint spec.
-- [`plans/alcatraz-cli.md`](plans/alcatraz-cli.md) — CLI implementation plan.
-- [`plans/end-to-end-wrap-up.md`](plans/end-to-end-wrap-up.md) — wrap-up plan covering the worker-reports-back pipeline, overlay writes, Traefik+routes ingress.
 
 ## Contributing
 
