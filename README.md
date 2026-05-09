@@ -2,59 +2,114 @@
 
 A serverless sandbox platform for AI coding agents.
 
+[![.NET 8](https://img.shields.io/badge/.NET-8.0-512BD4?logo=dotnet&logoColor=white)](https://dotnet.microsoft.com/)
+[![Go 1.22+](https://img.shields.io/badge/Go-1.22%2B-00ADD8?logo=go&logoColor=white)](https://go.dev/)
+[![Firecracker](https://img.shields.io/badge/Firecracker-microVM-FF7043)](https://firecracker-microvm.github.io/)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
+## Table of contents
+
+- [What is Alcatraz?](#what-is-alcatraz)
+- [Key features](#key-features)
+- [Architecture overview](#architecture-overview)
+- [Quick start](#quick-start)
+- [Project structure](#project-structure)
+- [Development guide](#development-guide)
+- [Deployment](#deployment)
+- [Status](#status)
+- [Design references](#design-references)
+- [Contributing](#contributing)
+- [License](#license)
+
+## What is Alcatraz?
+
 Letting an AI coding agent loose on your laptop is a bad idea. Alcatraz gives each one its own throwaway Linux box in the cloud — spun up from a CLI, hardware-isolated via Firecracker, reachable over SSH with a short-lived certificate. Changes persist into an auditable delta you can diff and replay between runs.
 
-## What you get
+### Problem it solves
 
-- **Per-customer Firecracker microVMs** spawned on demand (KVM-backed, sub-second boot, hard isolation).
-- **Stock-`ssh` access via short-lived OpenSSH user certificates** — no shared keys, no pubkey storage, expiry-driven revocation.
-- **Audited filesystem changes via AgentFS overlay on NFS** — overlay persists across restarts, base image is reusable.
-- **Multi-host NATS-driven worker pool** with a Keycloak-backed control plane.
-- **Public TLS ingress via Traefik** with SNI-based routing to per-sandbox VMs (production deployment).
+- **Hardware-isolated execution** for untrusted agents — KVM-backed microVMs, not containers, not your laptop.
+- **No shared keys, no persisted pubkeys** — every connection is a fresh OpenSSH user certificate scoped to one sandbox and expired in 24 hours.
+- **Reproducible work** — each sandbox is `clean base image + per-sandbox delta`; diff the delta, replay it, throw it away.
+- **Operator-friendly fleet** — Keycloak-backed control plane, NATS-driven multi-host worker pool, Traefik SNI ingress. Nothing bespoke on the data path.
 
-## Components
+### Use cases
 
-Each component owns one slice of the customer's path from `alcatraz login` to a shell inside a sandbox.
+- Per-customer agent hosts for a coding-agent product.
+- Ephemeral CI runners for agentic test or refactor jobs.
+- Throwaway dev environments where a human or agent can `rm -rf /` without consequence.
 
-### `alcatraz.cli` — the customer's entry point *(shipped, [README](alcatraz.cli/README.md))*
+## Key features
+
+### For the SSH user
+
+- Stock `ssh` — no plugin, no proxy daemon. The CLI just execs OpenSSH with a cert.
+- 24-hour user certificates scoped to a single sandbox UUID; expiry is the revocation primitive.
+- Filesystem changes survive sandbox restarts via an AgentFS overlay; the base image is reusable.
+
+### For operators
+
+- Per-customer Firecracker microVMs (KVM-backed, sub-second boot, hard isolation).
+- Multi-host NATS-driven worker pool — add a worker, NATS routes spawns to it.
+- Keycloak handles identity; the API never sees customer credentials.
+- Public TLS ingress via Traefik with SNI-based routing to per-sandbox VMs.
+
+### Platform internals
+
+- **Transactional outbox** — the sandbox row and its `SandboxRequested` message are inserted in one DB transaction; a Quartz job drains the outbox onto NATS. No lost spawns, no double spawns.
+- **In-process NFSv3 server per worker** — AgentFS exposes the per-sandbox overlay as NFS straight from the worker process. No external NFS daemon, no shared mount; the VM mounts its own worker directly over the bridge subnet.
+- **Boot-from-overlay contract** — every VM boots from `clean base image + per-sandbox delta`. The delta survives restarts and is diffable. The base image is reusable across the fleet.
+- **Pre-boot overlay plant** — before `m.Start()`, the worker writes `/etc/ssh/auth_principals/al` (sandbox UUID) and `/etc/ssh/trusted_user_ca_keys` (the API's CA pubkey) into the overlay. sshd validates against these at first connection — no out-of-band provisioning step.
+- **Real readiness, not optimistic** — workers TCP-probe `vm_ip:22` until sshd accepts, *then* publish `vm.ready`. The API's `VmReadyConsumer` background service flips the sandbox to `Running` on receipt; the CLI's poll-until-Running keys off the same state machine.
+- **SNI-as-routing-key** — the sandbox UUID is the TLS SNI on the wire. Traefik's TCP router matches on it and splices to the worker-reported `host:port`. No HTTP, no app-layer mux, no per-tenant listener.
+- **Fanout vs. competing consumers, deliberately** — workers subscribe to `vm.spawn` in a queue group (one worker claims each spawn); `alcatraz.routes` subscribes to `vm.ready`/`vm.destroyed` *without* a queue group so every routes replica sees every event and converges its in-memory routing table.
+- **Atomic Traefik reloads** — `alcatraz.routes` writes the dynamic config via a temp-file + rename so Traefik never reads a half-written file during hot-reload.
+- **Dual-mode endpoint resolution** — when `Gateway__Host` is unset, the cert-issue response carries the per-sandbox VM IP (local dev, direct-to-bridge). When set, it carries Traefik's address (production). Same code path; one config flips it.
+- **Cert-only auth** — the API shells out to `ssh-keygen -s` to mint a 24-hour user cert with `principal = sandbox-UUID`. No per-customer pubkey is ever stored, and no credential persists past TTL.
+
+## Architecture overview
+
+The customer's path from `alcatraz login` to a shell is one auth proxy, one outbox, one NATS subject, one worker, and one TLS-terminating ingress. Each component owns a single slice and talks to its neighbours through narrow contracts.
+
+### Components
+
+#### `alcatraz.cli` — the customer's entry point *(shipped, [README](alcatraz.cli/README.md))*
 - Logs the customer in via OAuth device flow (proxied by the API).
 - Creates, lists, and deletes sandboxes.
 - Polls until the sandbox is `Running`, fetches a short-lived SSH cert, and opens a shell into it via stock `ssh`. SNI on the openssl `ProxyCommand` carries the sandbox UUID so Traefik can route.
 - Holds no server state and no long-lived secrets.
 
-### `alcatraz.api` — the customer-facing control plane *(shipped, [README](alcatraz.api/README.md))*
+#### `alcatraz.api` — the customer-facing control plane *(shipped, [README](alcatraz.api/README.md))*
 - Owns customer identity, registration, and the role/permission model.
 - Owns the `Sandbox` aggregate and its lifecycle (`Provisioning → Running → Deleting → Deleted/Failed`).
 - Acts as the SSH certificate authority — issues short-lived user certs scoped to a single sandbox.
 - Dispatches spawn and destroy work to workers via NATS, and consumes `vm.ready` to transition sandboxes to `Running` and persist their endpoint.
 - Never holds customer SSH keys, never runs VMs.
 
-### `alcatraz.worker` — sandbox lifecycle on the host *(shipped, [README](alcatraz.worker/README.md))*
+#### `alcatraz.worker` — sandbox lifecycle on the host *(shipped, [README](alcatraz.worker/README.md))*
 - Claims `vm.spawn` jobs from NATS and runs them.
 - Allocates host capacity (slots, IPs, TAPs) per sandbox.
 - Sets up and tears down per-sandbox networking and outbound NAT.
 - Provides each sandbox with a persistent, auditable filesystem overlay on top of the shared base image, and writes the per-sandbox `auth_principals` + the API's CA pubkey into the overlay before boot.
 - Boots and supervises the sandbox VM; publishes `vm.ready` after sshd is reachable and `vm.destroyed` on exit.
 
-### `alcatraz.core` — the sandbox itself *(shipped, [README](alcatraz.core/README.md))*
+#### `alcatraz.core` — the sandbox itself *(shipped, [README](alcatraz.core/README.md))*
 - The Linux environment customers actually SSH into.
 - Owns the guest OS, the pre-installed developer tooling, and `sshd`.
 - Owns the boot-from-overlay contract: a clean, reusable base image plus a per-sandbox delta that survives restarts.
 - `sshd` is configured with `TrustedUserCAKeys` and `AuthorizedPrincipalsFile` pointing at files the worker plants into the overlay at spawn time.
 
-### `alcatraz.routes` — NATS → Traefik route publisher *(shipped, [README](alcatraz.routes/README.md))*
+#### `alcatraz.routes` — NATS → Traefik route publisher *(shipped, [README](alcatraz.routes/README.md))*
 - Subscribes to `vm.ready` (no queue group — fanout) and `vm.destroyed`.
 - Maintains an in-memory sandbox→endpoint table.
 - Atomically writes Traefik's dynamic file-provider config; Traefik hot-reloads on change.
 
-### Traefik — public TLS ingress *(off-the-shelf, gated behind `--profile gateway`)*
+#### Traefik — public TLS ingress *(off-the-shelf, gated behind `--profile gateway`)*
 - Terminates TLS on `:443`, ACME via Let's Encrypt (TLS-ALPN-01) for the public hostname.
 - Matches inbound TLS by SNI = sandbox UUID and TCP-splices to the worker-reported VM endpoint.
 - The only component reachable from outside the cluster on the SSH path.
 
-## End-to-end request lifecycle
+### End-to-end request lifecycle
 
-%% Customer login → spawn → cert → connect → delete
 ```mermaid
 sequenceDiagram
     actor User
@@ -136,7 +191,7 @@ sequenceDiagram
 6. **Connect.** The CLI invokes stock `ssh` with the cert. In production it uses `ProxyCommand=openssl s_client -connect ssh.alcatraz.io:443 -servername <id>`; Traefik terminates TLS, matches the SNI, and TCP-splices to the VM's `sshd`. `sshd` validates the cert against the CA pubkey + `auth_principals/al` containing the sandbox UUID — no per-customer key ever touches the VM.
 7. **Delete.** On `alcatraz sandbox delete`, the API marks the row `Deleting` and publishes `vm.destroy`. The worker tears down CNI, NFS, and Firecracker, then publishes `vm.destroyed`. `alcatraz.routes` removes the route from Traefik. Cert TTL expiry handles revocation in steady state; KRL is reserved for sub-TTL revocation later.
 
-## Local development
+## Quick start
 
 A single root-level [`docker-compose.yml`](docker-compose.yml) brings up the control plane and supporting services. The worker runs on the host (it needs KVM and CNI). The CLI is built locally.
 
@@ -220,6 +275,42 @@ cat /etc/ssh/trusted_user_ca_keys         # → the API's CA pubkey
 
 A `curl`-only verification of the same flow lives at [`alcatraz.api/docs/local-end-to-end.md`](alcatraz.api/docs/local-end-to-end.md).
 
+## Project structure
+
+```
+alcatraz/
+├── docker-compose.yml # API + IdP + db + cache + msgq; profiles for gateway / demo-sshd
+├── alcatraz.api/      # .NET 8 control plane: auth proxy, sandbox aggregate, SSH CA, vm.ready consumer
+├── alcatraz.cli/      # .NET 8 customer CLI: device-flow login, sandbox CRUD, SSH cert fetch + ssh wrapper
+├── alcatraz.core/     # Firecracker kernel/rootfs build scripts and launchers
+├── alcatraz.worker/   # Go worker: NATS sub/pub + CNI + AgentFS/NFS + Firecracker SDK (host-run)
+├── alcatraz.routes/   # Go service: NATS → Traefik dynamic-config publisher
+└── plans/             # cross-component design docs
+```
+
+## Development guide
+
+### Per-component notes
+
+- [`alcatraz.api/README.md`](alcatraz.api/README.md) — control plane (`alcatraz.api` in compose).
+- [`alcatraz.worker/README.md`](alcatraz.worker/README.md) — NATS subscriber + Firecracker, host-run (KVM + CNI).
+- [`alcatraz.core/README.md`](alcatraz.core/README.md) — kernel and Ubuntu rootfs build.
+- [`alcatraz.cli/README.md`](alcatraz.cli/README.md) — customer CLI.
+- [`alcatraz.routes/README.md`](alcatraz.routes/README.md) — NATS → Traefik route publisher.
+- [`alcatraz.api/docs/local-end-to-end.md`](alcatraz.api/docs/local-end-to-end.md) — `curl`-only walkthrough, negative test cases.
+
+### Running tests
+
+```bash
+# Go components
+make -C alcatraz.worker test
+make -C alcatraz.routes test
+```
+
+The .NET projects (`alcatraz.api`, `alcatraz.cli`) don't ship a test suite yet — exercise them via the end-to-end walkthrough above and the `curl` cases in `alcatraz.api/docs/local-end-to-end.md`.
+
+## Deployment
+
 ### Public-host walkthrough (gateway profile)
 
 For "another laptop connecting from the internet," run on a public host with DNS pointing `ssh.alcatraz.io` (or whatever you set `GATEWAY_AUTOCERT_HOST` to) at the host's public IP, and inbound `:443` open:
@@ -237,6 +328,26 @@ sudo -E ./alcatraz.worker/bin/alcatraz-worker
 
 From the remote laptop, point `alcatraz` at the public API, then `alcatraz login` / `sandbox create` / `alcatraz ssh <id>` works the same. The cert response now carries `ssh.alcatraz.io:443`; the CLI's openssl `ProxyCommand` adds `-servername <id>`; Traefik routes the TLS connection by SNI to the right VM.
 
+### Environment variables
+
+The load-bearing ones at deploy time:
+
+| Variable | Component | Purpose |
+|---|---|---|
+| `GATEWAY_AUTOCERT_HOST` | compose / `alcatraz.routes` | Public hostname Traefik gets an ACME cert for and that `alcatraz.routes` writes into Traefik's router rule. |
+| `Gateway__Host`, `Gateway__Port` | `alcatraz.api` | When set, the cert-issue response carries this `(host, port)` instead of the worker-reported VM endpoint. Unset = local-dev direct-to-VM mode. |
+| `Ssh__CA__PrivateKeyPath` | `alcatraz.api` | Path to the SSH CA private key inside the API container. Defaults to `/run/alcatraz-ca/alcatraz_ca` (mounted from the `alcatraz_ca` volume). |
+| `Nats__Url` / `NATS_URL` | `alcatraz.api`, `alcatraz.routes` | NATS endpoint. |
+| `WORKER_CA_PUBKEY_PATH` | `alcatraz.worker` | Host path to the API's CA pubkey; the worker plants it into each VM's overlay. |
+
+### Production considerations
+
+- **TLS termination** is Traefik's job; nothing else listens on `:443`. Don't put another reverse proxy in front — it would terminate the SNI Traefik needs to route by sandbox UUID.
+- **CA key rotation** invalidates every previously issued cert. Treat the `alcatraz_ca` volume as production state; back it up before a planned rotation.
+- **NATS auth** is open in the dev compose. Add credentials / TLS before exposing the broker beyond the host.
+- **Postgres backups** are out of scope for this repo; the `Sandbox` aggregate is the only stateful thing the API owns.
+- **Seq is dev-only** (`alcatraz-seq` in compose). Wire OpenTelemetry exporters to your real observability stack in production.
+
 ### Resetting the stack
 
 ```bash
@@ -246,27 +357,17 @@ docker compose up -d --build
 
 You **must** wipe volumes if you change the realm export — Keycloak only imports on first boot. Wiping `alcatraz_ca` regenerates the CA key (invalidates every previously issued cert). Wiping `traefik_acme` forces ACME re-issuance on the next gateway start.
 
-### Per-component notes
+## Status
 
-- [`alcatraz.api/README.md`](alcatraz.api/README.md) — control plane (`alcatraz.api` in compose).
-- [`alcatraz.worker/README.md`](alcatraz.worker/README.md) — NATS subscriber + Firecracker, host-run (KVM + CNI).
-- [`alcatraz.core/README.md`](alcatraz.core/README.md) — kernel and Ubuntu rootfs build.
-- [`alcatraz.cli/README.md`](alcatraz.cli/README.md) — customer CLI.
-- [`alcatraz.routes/README.md`](alcatraz.routes/README.md) — NATS → Traefik route publisher.
-- [`alcatraz.api/docs/local-end-to-end.md`](alcatraz.api/docs/local-end-to-end.md) — `curl`-only walkthrough, negative test cases.
+**Shipped:**
 
-## Project layout
+- `alcatraz.cli`, `alcatraz.api`, `alcatraz.worker`, `alcatraz.core`, `alcatraz.routes` — all five components run end-to-end. The local and `--profile gateway` walkthroughs above are the canonical proof.
 
-```
-alcatraz/
-├── docker-compose.yml # API + IdP + db + cache + msgq; profiles for gateway / demo-sshd
-├── alcatraz.api/      # .NET 8 control plane: auth proxy, sandbox aggregate, SSH CA, vm.ready consumer
-├── alcatraz.cli/      # .NET 8 customer CLI: device-flow login, sandbox CRUD, SSH cert fetch + ssh wrapper
-├── alcatraz.core/     # Firecracker kernel/rootfs build scripts and launchers
-├── alcatraz.worker/   # Go worker: NATS sub/pub + CNI + AgentFS/NFS + Firecracker SDK (host-run)
-├── alcatraz.routes/   # Go service: NATS → Traefik dynamic-config publisher
-└── plans/             # cross-component design docs
-```
+**Not yet shipped:**
+
+- KRL-based sub-TTL certificate revocation (today, expiry is the only revocation mechanism).
+- .NET test suite for `alcatraz.api` and `alcatraz.cli`.
+- NATS auth/TLS in the production compose profile.
 
 ## Design references
 
@@ -274,3 +375,13 @@ alcatraz/
 - [`plans/alcatraz-api-cli-endpoints.md`](plans/alcatraz-api-cli-endpoints.md) — control-plane endpoint spec.
 - [`plans/alcatraz-cli.md`](plans/alcatraz-cli.md) — CLI implementation plan.
 - [`plans/end-to-end-wrap-up.md`](plans/end-to-end-wrap-up.md) — wrap-up plan covering the worker-reports-back pipeline, overlay writes, Traefik+routes ingress.
+
+## Contributing
+
+- Branch from `master`; keep commits scoped and use the existing conventional-commit style (`feat:`, `fix:`, `docs:`, `chore:` — see `git log`).
+- Run `make -C alcatraz.worker test` and `make -C alcatraz.routes test` before opening a PR for changes in those components.
+- For changes that touch the request lifecycle, re-run the end-to-end walkthrough in [Quick start](#quick-start) and update the Mermaid diagram if the contract changed.
+
+## License
+
+[MIT](LICENSE).
