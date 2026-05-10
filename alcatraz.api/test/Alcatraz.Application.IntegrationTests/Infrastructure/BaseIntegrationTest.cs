@@ -4,7 +4,8 @@ using Microsoft.Extensions.DependencyInjection;
 
 namespace Alcatraz.Application.IntegrationTests.Infrastructure;
 
-public abstract class BaseIntegrationTest : IClassFixture<IntegrationTestWebAppFactory>
+[Collection(IntegrationTestCollection.Name)]
+public abstract class BaseIntegrationTest
 {
     private readonly IServiceScope _scope;
     protected readonly ISender Sender;

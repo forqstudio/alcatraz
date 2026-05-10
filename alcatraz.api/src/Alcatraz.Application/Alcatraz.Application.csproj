@@ -22,6 +22,7 @@
 
 	<ItemGroup>
 		<InternalsVisibleTo Include="Alcatraz.Application.UnitTests" />
+		<InternalsVisibleTo Include="Alcatraz.Application.IntegrationTests" />
 	</ItemGroup>
 
 </Project>

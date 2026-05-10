@@ -152,4 +152,113 @@ public class SandboxTests : BaseTest
         sandbox.Host.Should().Be("172.16.0.10");
         sandbox.DomainEvents().Should().BeEmpty();
     }
+
+    [Fact]
+    public void MarkDeleting_FromRunning_TransitionsToDeleting_AndRaisesEvent()
+    {
+        var sandbox = Sandbox.Request(OwnerUserId, 2, 2048, UtcNow);
+        sandbox.MarkRunning(Runtime(), UtcNow.AddSeconds(5));
+        sandbox.ClearDomainEvents();
+
+        var result = sandbox.MarkDeleting(UtcNow.AddMinutes(10));
+
+        result.IsSuccess.Should().BeTrue();
+        sandbox.Status.Should().Be(SandboxStatus.Deleting);
+        sandbox.DeletedOnUtc.Should().Be(UtcNow.AddMinutes(10));
+
+        AssertDomainEventWasPublished<SandboxDeletionRequestedDomainEvent>(sandbox)
+            .SandboxId.Should().Be(sandbox.Id);
+    }
+
+    [Fact]
+    public void MarkDeleting_WhenAlreadyDeleted_ReturnsAlreadyDeleted()
+    {
+        var sandbox = Sandbox.Request(OwnerUserId, 2, 2048, UtcNow);
+        sandbox.MarkDeleting(UtcNow);
+        sandbox.MarkDestroyed(UtcNow.AddMinutes(1));
+        sandbox.Status.Should().Be(SandboxStatus.Deleted);
+        sandbox.ClearDomainEvents();
+
+        var result = sandbox.MarkDeleting(UtcNow.AddMinutes(2));
+
+        result.IsFailure.Should().BeTrue();
+        result.Error.Should().Be(SandboxErrors.AlreadyDeleted);
+        sandbox.DomainEvents().Should().BeEmpty();
+    }
+
+    [Fact]
+    public void MarkDestroyed_FromDeleting_TransitionsToDeleted()
+    {
+        var sandbox = Sandbox.Request(OwnerUserId, 2, 2048, UtcNow);
+        var deletingAt = UtcNow.AddMinutes(5);
+        sandbox.MarkDeleting(deletingAt);
+        sandbox.ClearDomainEvents();
+
+        var result = sandbox.MarkDestroyed(UtcNow.AddMinutes(6));
+
+        result.IsSuccess.Should().BeTrue();
+        sandbox.Status.Should().Be(SandboxStatus.Deleted);
+        sandbox.DeletedOnUtc.Should().Be(deletingAt);
+        sandbox.DomainEvents().Should().BeEmpty();
+    }
+
+    [Fact]
+    public void MarkDestroyed_FromProvisioning_TransitionsToFailed()
+    {
+        var sandbox = Sandbox.Request(OwnerUserId, 2, 2048, UtcNow);
+        sandbox.ClearDomainEvents();
+
+        var result = sandbox.MarkDestroyed(UtcNow.AddSeconds(30));
+
+        result.IsSuccess.Should().BeTrue();
+        sandbox.Status.Should().Be(SandboxStatus.Failed);
+        sandbox.DomainEvents().Should().BeEmpty();
+    }
+
+    [Fact]
+    public void MarkDestroyed_FromRunning_TransitionsToFailed()
+    {
+        var sandbox = Sandbox.Request(OwnerUserId, 2, 2048, UtcNow);
+        sandbox.MarkRunning(Runtime(), UtcNow.AddSeconds(5));
+        sandbox.ClearDomainEvents();
+
+        var result = sandbox.MarkDestroyed(UtcNow.AddMinutes(2));
+
+        result.IsSuccess.Should().BeTrue();
+        sandbox.Status.Should().Be(SandboxStatus.Failed);
+        sandbox.DomainEvents().Should().BeEmpty();
+    }
+
+    [Fact]
+    public void MarkDestroyed_WhenAlreadyDeleted_IsNoOp()
+    {
+        var sandbox = Sandbox.Request(OwnerUserId, 2, 2048, UtcNow);
+        sandbox.MarkDeleting(UtcNow);
+        sandbox.MarkDestroyed(UtcNow.AddMinutes(1));
+        sandbox.Status.Should().Be(SandboxStatus.Deleted);
+        var deletedAt = sandbox.DeletedOnUtc;
+        sandbox.ClearDomainEvents();
+
+        var result = sandbox.MarkDestroyed(UtcNow.AddMinutes(5));
+
+        result.IsSuccess.Should().BeTrue();
+        sandbox.Status.Should().Be(SandboxStatus.Deleted);
+        sandbox.DeletedOnUtc.Should().Be(deletedAt);
+        sandbox.DomainEvents().Should().BeEmpty();
+    }
+
+    [Fact]
+    public void MarkDestroyed_WhenAlreadyFailed_IsNoOp()
+    {
+        var sandbox = Sandbox.Request(OwnerUserId, 2, 2048, UtcNow);
+        sandbox.MarkDestroyed(UtcNow.AddSeconds(10));
+        sandbox.Status.Should().Be(SandboxStatus.Failed);
+        sandbox.ClearDomainEvents();
+
+        var result = sandbox.MarkDestroyed(UtcNow.AddMinutes(5));
+
+        result.IsSuccess.Should().BeTrue();
+        sandbox.Status.Should().Be(SandboxStatus.Failed);
+        sandbox.DomainEvents().Should().BeEmpty();
+    }
 }
