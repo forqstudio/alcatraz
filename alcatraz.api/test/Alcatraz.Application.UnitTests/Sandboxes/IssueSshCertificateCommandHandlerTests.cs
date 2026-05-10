@@ -44,7 +44,27 @@ public class IssueSshCertificateCommandHandlerTests
     private static Sandbox RunningSandbox(Guid ownerUserId, string host = VmHost, int port = VmPort)
     {
         var sandbox = Sandbox.Request(ownerUserId, 2, 2048, UtcNow);
-        sandbox.MarkRunning(host, port, UtcNow);
+        sandbox.MarkRunning(
+            new SandboxRuntimeInfo(
+                Host: host,
+                Port: port,
+                ActualVcpus: 2,
+                ActualMemoryMib: 2048,
+                BootDurationMs: 0,
+                ReadyAtUtc: UtcNow,
+                VmmVersion: null,
+                VmmState: null,
+                FirecrackerPid: null,
+                SocketPath: string.Empty,
+                TapDevice: string.Empty,
+                MacAddress: string.Empty,
+                VmIp: host,
+                HostGatewayIp: string.Empty,
+                NfsPort: 0,
+                WorkerSlotIndex: 0,
+                RootfsPath: string.Empty,
+                KernelPath: string.Empty),
+            UtcNow);
         return sandbox;
     }
 

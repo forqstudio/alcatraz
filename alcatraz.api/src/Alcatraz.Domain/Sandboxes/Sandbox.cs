@@ -39,6 +39,38 @@ public sealed class Sandbox : Entity
 
     public int? Port { get; private set; }
 
+    public int? ActualVcpus { get; private set; }
+
+    public int? ActualMemoryMib { get; private set; }
+
+    public int? BootDurationMs { get; private set; }
+
+    public DateTime? ReadyAtUtc { get; private set; }
+
+    public string? VmmVersion { get; private set; }
+
+    public string? VmmState { get; private set; }
+
+    public int? FirecrackerPid { get; private set; }
+
+    public string? SocketPath { get; private set; }
+
+    public string? TapDevice { get; private set; }
+
+    public string? MacAddress { get; private set; }
+
+    public string? VmIp { get; private set; }
+
+    public string? HostGatewayIp { get; private set; }
+
+    public int? NfsPort { get; private set; }
+
+    public int? WorkerSlotIndex { get; private set; }
+
+    public string? RootfsPath { get; private set; }
+
+    public string? KernelPath { get; private set; }
+
     public static Sandbox Request(Guid ownerUserId, int vcpus, int memoryMib, DateTime utcNow)
     {
         var sandbox = new Sandbox(
@@ -58,7 +90,7 @@ public sealed class Sandbox : Entity
         return sandbox;
     }
 
-    public Result MarkRunning(string host, int port, DateTime utcNow)
+    public Result MarkRunning(SandboxRuntimeInfo runtime, DateTime utcNow)
     {
         if (Status != SandboxStatus.Provisioning)
         {
@@ -66,10 +98,33 @@ public sealed class Sandbox : Entity
         }
 
         Status = SandboxStatus.Running;
-        Host = host;
-        Port = port;
+        Host = runtime.Host;
+        Port = runtime.Port;
+        ActualVcpus = runtime.ActualVcpus;
+        ActualMemoryMib = runtime.ActualMemoryMib;
+        BootDurationMs = runtime.BootDurationMs;
+        ReadyAtUtc = runtime.ReadyAtUtc;
+        VmmVersion = runtime.VmmVersion;
+        VmmState = runtime.VmmState;
+        FirecrackerPid = runtime.FirecrackerPid;
+        SocketPath = runtime.SocketPath;
+        TapDevice = runtime.TapDevice;
+        MacAddress = runtime.MacAddress;
+        VmIp = runtime.VmIp;
+        HostGatewayIp = runtime.HostGatewayIp;
+        NfsPort = runtime.NfsPort;
+        WorkerSlotIndex = runtime.WorkerSlotIndex;
+        RootfsPath = runtime.RootfsPath;
+        KernelPath = runtime.KernelPath;
 
-        RaiseDomainEvent(new SandboxBecameRunningDomainEvent(Id, host, port));
+        RaiseDomainEvent(new SandboxBecameRunningDomainEvent(
+            Id,
+            runtime.Host,
+            runtime.Port,
+            runtime.ActualVcpus,
+            runtime.ActualMemoryMib,
+            runtime.BootDurationMs,
+            runtime.ReadyAtUtc));
 
         return Result.Success();
     }

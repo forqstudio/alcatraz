@@ -287,6 +287,10 @@ sudo -E ./alcatraz.worker/bin/alcatraz-worker
 
 `sudo` is required for CNI/NAT operations; `-E` preserves env vars (`WORKER_CA_PUBKEY_PATH` defaults to `/run/alcatraz-ca/alcatraz_ca.pub`). The worker subscribes to `vm.spawn` / `vm.destroy` on NATS and publishes `vm.ready` / `vm.destroyed`. Leave it running in the foreground; open a new terminal for the CLI.
 
+CWD is unimportant — path defaults (`alcatraz.core/` artifacts) and `.env` discovery are anchored to the worker binary's location, and `vm.LoadConfig().ValidateArtifacts()` lstats the read-only inputs at startup so any mistyped path or non-standard layout crashes on boot rather than 30 s into a customer's first spawn. Override individual paths with `WORKER_FIRECRACKER_BIN`, `WORKER_KERNEL_PATH`, `WORKER_ROOTFS_PATH`, or `WORKER_AGENTFS_DATA` — see `alcatraz.worker/.env.example`.
+
+> **Order matters.** `vm.spawn` is published over core NATS pub/sub (no JetStream), so a spawn submitted before a worker is connected is silently dropped — the sandbox stays `Provisioning` forever. Always start the worker *before* using the CLI to create sandboxes.
+
 ### 6. Build and install the CLI
 
 ```bash

@@ -1,6 +1,6 @@
 using System.Text.Json;
-using System.Text.Json.Serialization;
 using Alcatraz.Application.Sandboxes.MarkSandboxRunning;
+using Alcatraz.Domain.Sandboxes;
 using MediatR;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -56,11 +56,33 @@ internal sealed class VmReadyConsumer(
                     continue;
                 }
 
+                LogBootTelemetry(sandboxId, payload);
+
+                var runtime = new SandboxRuntimeInfo(
+                    payload.Host,
+                    payload.Port,
+                    payload.ActualVcpus,
+                    payload.ActualMemoryMib,
+                    payload.BootDurationMs,
+                    payload.ReadyAtUtc,
+                    payload.VmmVersion,
+                    payload.VmmState,
+                    payload.FirecrackerPid,
+                    payload.SocketPath ?? string.Empty,
+                    payload.TapDevice ?? string.Empty,
+                    payload.MacAddress ?? string.Empty,
+                    payload.VmIp ?? string.Empty,
+                    payload.HostGatewayIp ?? string.Empty,
+                    payload.NfsPort,
+                    payload.WorkerSlotIndex,
+                    payload.RootfsPath ?? string.Empty,
+                    payload.KernelPath ?? string.Empty);
+
                 using var scope = scopeFactory.CreateScope();
                 var sender = scope.ServiceProvider.GetRequiredService<ISender>();
 
                 var result = await sender.Send(
-                    new MarkSandboxRunningCommand(sandboxId, payload.Host, payload.Port),
+                    new MarkSandboxRunningCommand(sandboxId, runtime),
                     stoppingToken);
 
                 if (result.IsFailure)
@@ -82,8 +104,36 @@ internal sealed class VmReadyConsumer(
         }
     }
 
+    private void LogBootTelemetry(Guid sandboxId, VmReadyPayload payload) =>
+        logger.LogInformation(
+            "vm.ready boot telemetry — sandbox {SandboxId}: total {TotalMs}ms (overlay {OverlayMs}ms, fc_boot {FcBootMs}ms, sshd_probe {SshdProbeMs}ms)",
+            sandboxId,
+            payload.BootDurationMs,
+            payload.PhaseOverlayPrepMs,
+            payload.PhaseFcBootMs,
+            payload.PhaseSshdProbeMs);
+
     private sealed record VmReadyPayload(
-        [property: JsonPropertyName("id")] string Id,
-        [property: JsonPropertyName("host")] string Host,
-        [property: JsonPropertyName("port")] int Port);
+        string Id,
+        string Host,
+        int Port,
+        int ActualVcpus,
+        int ActualMemoryMib,
+        int BootDurationMs,
+        DateTime ReadyAtUtc,
+        string? VmmVersion,
+        string? VmmState,
+        int? FirecrackerPid,
+        string? SocketPath,
+        string? TapDevice,
+        string? MacAddress,
+        string? VmIp,
+        string? HostGatewayIp,
+        int NfsPort,
+        int WorkerSlotIndex,
+        string? RootfsPath,
+        string? KernelPath,
+        long PhaseOverlayPrepMs,
+        long PhaseFcBootMs,
+        long PhaseSshdProbeMs);
 }

@@ -24,7 +24,25 @@ internal sealed class GetSandboxQueryHandler(
                 requested_memory_mib AS MemoryMib,
                 status AS Status,
                 created_on_utc AS CreatedOnUtc,
-                deleted_on_utc AS DeletedOnUtc
+                deleted_on_utc AS DeletedOnUtc,
+                host AS Host,
+                port AS Port,
+                actual_vcpus AS ActualVcpus,
+                actual_memory_mib AS ActualMemoryMib,
+                boot_duration_ms AS BootDurationMs,
+                ready_at_utc AS ReadyAtUtc,
+                vmm_version AS VmmVersion,
+                vmm_state AS VmmState,
+                firecracker_pid AS FirecrackerPid,
+                socket_path AS SocketPath,
+                tap_device AS TapDevice,
+                mac_address AS MacAddress,
+                vm_ip AS VmIp,
+                host_gateway_ip AS HostGatewayIp,
+                nfs_port AS NfsPort,
+                worker_slot_index AS WorkerSlotIndex,
+                rootfs_path AS RootfsPath,
+                kernel_path AS KernelPath
             FROM sandboxes
             WHERE id = @SandboxId
             """;

@@ -28,13 +28,13 @@ internal sealed class MarkSandboxRunningCommandHandler(
         // Idempotent: at-least-once delivery may replay the same vm.ready event.
         // If the sandbox is already Running with the same endpoint, treat as success.
         if (sandbox.Status == SandboxStatus.Running &&
-            sandbox.Host == request.Host &&
-            sandbox.Port == request.Port)
+            sandbox.Host == request.Runtime.Host &&
+            sandbox.Port == request.Runtime.Port)
         {
             return Result.Success();
         }
 
-        var transition = sandbox.MarkRunning(request.Host, request.Port, dateTimeProvider.UtcNow);
+        var transition = sandbox.MarkRunning(request.Runtime, dateTimeProvider.UtcNow);
         if (transition.IsFailure)
         {
             logger.LogWarning(
@@ -47,10 +47,12 @@ internal sealed class MarkSandboxRunningCommandHandler(
         await unitOfWork.SaveChangesAsync(cancellationToken);
 
         logger.LogInformation(
-            "Sandbox {SandboxId} transitioned to Running at {Host}:{Port}",
+            "Sandbox {SandboxId} transitioned to Running at {Host}:{Port} (boot {BootDurationMs}ms, vmm {VmmVersion})",
             sandbox.Id,
-            request.Host,
-            request.Port);
+            request.Runtime.Host,
+            request.Runtime.Port,
+            request.Runtime.BootDurationMs,
+            request.Runtime.VmmVersion ?? "unknown");
 
         return Result.Success();
     }

@@ -10,6 +10,27 @@ public class SandboxTests : BaseTest
     private static readonly DateTime UtcNow = new(2026, 5, 8, 12, 0, 0, DateTimeKind.Utc);
     private static readonly Guid OwnerUserId = Guid.NewGuid();
 
+    private static SandboxRuntimeInfo Runtime(string host = "172.16.0.10", int port = 22) =>
+        new(
+            Host: host,
+            Port: port,
+            ActualVcpus: 2,
+            ActualMemoryMib: 2048,
+            BootDurationMs: 1234,
+            ReadyAtUtc: UtcNow,
+            VmmVersion: "1.15.1",
+            VmmState: "Running",
+            FirecrackerPid: 4242,
+            SocketPath: "/tmp/alcatraz-test.sock",
+            TapDevice: "fc-tap0",
+            MacAddress: "AA:FC:00:00:00:01",
+            VmIp: host,
+            HostGatewayIp: "172.16.0.1",
+            NfsPort: 8000,
+            WorkerSlotIndex: 0,
+            RootfsPath: "/test/rootfs",
+            KernelPath: "/test/vmlinux");
+
     [Fact]
     public void Request_SetsProvisioningStatus_AndRaisesSandboxRequestedEvent()
     {
@@ -88,7 +109,7 @@ public class SandboxTests : BaseTest
         // sandbox endpoint via vm.ready, which advances the state to Running.
         sandbox.CanIssueCertificate().Should().BeFalse();
 
-        sandbox.MarkRunning("172.16.0.10", 22, UtcNow);
+        sandbox.MarkRunning(Runtime(), UtcNow);
         sandbox.CanIssueCertificate().Should().BeTrue();
 
         sandbox.MarkDeleting(UtcNow);
@@ -101,12 +122,17 @@ public class SandboxTests : BaseTest
         var sandbox = Sandbox.Request(OwnerUserId, 2, 2048, UtcNow);
         sandbox.ClearDomainEvents();
 
-        var result = sandbox.MarkRunning("172.16.0.10", 22, UtcNow.AddSeconds(5));
+        var result = sandbox.MarkRunning(Runtime(), UtcNow.AddSeconds(5));
 
         result.IsSuccess.Should().BeTrue();
         sandbox.Status.Should().Be(SandboxStatus.Running);
         sandbox.Host.Should().Be("172.16.0.10");
         sandbox.Port.Should().Be(22);
+        sandbox.ActualVcpus.Should().Be(2);
+        sandbox.ActualMemoryMib.Should().Be(2048);
+        sandbox.BootDurationMs.Should().Be(1234);
+        sandbox.VmmVersion.Should().Be("1.15.1");
+        sandbox.TapDevice.Should().Be("fc-tap0");
 
         AssertDomainEventWasPublished<SandboxBecameRunningDomainEvent>(sandbox)
             .SandboxId.Should().Be(sandbox.Id);
@@ -116,10 +142,10 @@ public class SandboxTests : BaseTest
     public void MarkRunning_WhenNotProvisioning_ReturnsNotProvisioningError()
     {
         var sandbox = Sandbox.Request(OwnerUserId, 2, 2048, UtcNow);
-        sandbox.MarkRunning("172.16.0.10", 22, UtcNow);
+        sandbox.MarkRunning(Runtime(), UtcNow);
         sandbox.ClearDomainEvents();
 
-        var result = sandbox.MarkRunning("172.16.0.11", 22, UtcNow.AddSeconds(1));
+        var result = sandbox.MarkRunning(Runtime(host: "172.16.0.11"), UtcNow.AddSeconds(1));
 
         result.IsFailure.Should().BeTrue();
         result.Error.Should().Be(SandboxErrors.NotProvisioning);
