@@ -7,8 +7,11 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 	"time"
+
+	"github.com/joho/godotenv"
 
 	"alcatraz.worker/internal/logging"
 	"alcatraz.worker/internal/messaging"
@@ -18,9 +21,18 @@ import (
 const defaultCAPubkeyPath = "/run/alcatraz-ca/alcatraz_ca.pub"
 
 func main() {
+	// Load .env from a path anchored to the executable, not CWD. Without this,
+	// running the binary from anywhere other than alcatraz.worker/ would skip
+	// the .env entirely and silently use code defaults — exactly the trap
+	// hardcoded relative paths used to set.
+	loadDotenvNearExecutable()
+
 	shutdownLogs := logging.Init()
 
-	vmConfig := vm.DefaultConfig()
+	vmConfig := vm.LoadConfig()
+	if err := vmConfig.ValidateArtifacts(); err != nil {
+		logging.Fatal("VM artifact validation failed at startup", "err", err)
+	}
 
 	natsConfig, err := messaging.LoadConfig()
 	if err != nil {
@@ -150,4 +162,21 @@ func main() {
 	flushCtx, flushCancel := context.WithTimeout(context.Background(), 2*time.Second)
 	shutdownLogs(flushCtx)
 	flushCancel()
+}
+
+// loadDotenvNearExecutable looks for .env next to alcatraz.worker/, derived
+// from the binary's path. Best-effort: silently no-ops if the file is absent
+// or os.Executable fails (subsequent CWD-relative load in messaging.LoadConfig
+// is the safety net). godotenv.Load does not overwrite existing env vars, so a
+// later CWD-relative load is idempotent.
+func loadDotenvNearExecutable() {
+	exe, err := os.Executable()
+	if err != nil {
+		return
+	}
+	if resolved, err := filepath.EvalSymlinks(exe); err == nil {
+		exe = resolved
+	}
+	candidate := filepath.Join(filepath.Dir(filepath.Dir(exe)), ".env")
+	_ = godotenv.Load(candidate)
 }

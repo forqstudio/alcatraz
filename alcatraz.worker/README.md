@@ -81,8 +81,7 @@ sudo cp cni/alcatraz-bridge.conflist /etc/cni/net.d/
 
 The worker expects:
 - Host uplink interface detectable from `ip route show default`
-- `alcatraz.core/` with built kernel and rootfs available
-- Worker references these paths from `../alcatraz.core/`:
+- `alcatraz.core/` with built kernel and rootfs available — by default at `<repo>/alcatraz.core/`, anchored to the worker binary's location (override per-path with `WORKER_FIRECRACKER_BIN`, `WORKER_KERNEL_PATH`, `WORKER_ROOTFS_PATH`, `WORKER_AGENTFS_DATA`):
   - `bin/firecracker-v1.15.1` - firecracker binary
   - `linux-amazon/vmlinux` - built kernel
   - `rootfs/` - built Ubuntu rootfs
@@ -147,17 +146,22 @@ Seq UI: http://localhost:8083 (auth disabled for local dev). The worker ships CL
 Start the worker on the host (must run as root):
 
 ```bash
-cd alcatraz.worker
-sudo -E ./bin/alcatraz-worker
+sudo -E ./alcatraz.worker/bin/alcatraz-worker     # from repo root
+# or, equivalently
+cd alcatraz.worker && sudo -E ./bin/alcatraz-worker
 ```
+
+CWD doesn't matter. Path defaults are anchored to the executable's location (`os.Executable()` → `<repo>/alcatraz.worker/bin/alcatraz-worker` → `<repo>/alcatraz.core/...`), the `.env` next to the worker module is loaded the same way, and `vm.LoadConfig().ValidateArtifacts()` lstats firecracker / kernel / rootfs at startup. A missing artifact crashes on boot with a message naming the resolved path and the env var that overrides it — never the old failure mode where the worker accepted a spawn and only failed inside `prepare agentfs` 30 s later.
 
 The worker is intentionally not part of `docker compose` — it needs KVM, CNI, and root-level network setup on the host.
 
 ## Configuration
 
-The worker is configured entirely via environment variables (loaded from `.env`
-if present — a missing `.env` is not an error). VM-side defaults live in
-`internal/vm/config.go` as constants and are not currently overridable via env.
+The worker is configured entirely via environment variables. `.env` is loaded
+from the directory containing the worker module (resolved from
+`os.Executable()`, not from CWD), so the same `.env` is picked up whether you
+launch from the repo root or from `alcatraz.worker/`. A missing `.env` is not
+an error.
 
 | Var | Default | Notes |
 |---|---|---|
@@ -169,10 +173,18 @@ if present — a missing `.env` is not an error). VM-side defaults live in
 | `NATS_DESTROY_SUBJECT` | `vm.destroy` | Subject the worker subscribes to for delete requests from the API |
 | `NATS_DESTROY_QUEUE_GROUP` | `worker-vm-destroy` | NATS queue group for `vm.destroy` consumers |
 | `WORKER_CA_PUBKEY_PATH` | `/run/alcatraz-ca/alcatraz_ca.pub` | API's SSH CA pubkey, planted into each VM's overlay |
+| `WORKER_FIRECRACKER_BIN` | `<repo>/alcatraz.core/bin/firecracker-v1.15.1` | Firecracker binary. Default derived from `os.Executable()` (binary at `<repo>/alcatraz.worker/bin/alcatraz-worker` → core dir is the sibling of `alcatraz.worker/`). Override for non-standard layouts. |
+| `WORKER_KERNEL_PATH` | `<repo>/alcatraz.core/linux-amazon/vmlinux` | Guest kernel image. Same anchoring as above. |
+| `WORKER_ROOTFS_PATH` | `<repo>/alcatraz.core/rootfs` | Guest rootfs base image (read-only; per-VM overlay is layered on top). |
+| `WORKER_AGENTFS_DATA` | `<repo>/alcatraz.core/.agentfs` | Per-sandbox AgentFS overlay store. Created on demand if missing. |
 | `SEQ_URL` | _(empty)_ | If set, ship CLEF events to Seq at this URL |
 | `SEQ_API_KEY` | _(empty)_ | Optional Seq API key |
 | `APPLICATION` | `alcatraz-worker` | Tag attached to every log event |
 | `ENVIRONMENT` | `development` | Tag attached to every log event |
+
+The four `WORKER_*` path overrides are validated at startup via `os.Stat` — a
+missing or mistyped path crashes the process before it subscribes to NATS,
+naming both the resolved path and the env var that would override it.
 
 ## Spawn a VM
 

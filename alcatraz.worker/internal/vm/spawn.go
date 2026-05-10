@@ -41,6 +41,8 @@ func Spawn(
 	s *VirtualMachineService,
 	createVMInput *CreateVirtualMachineInput,
 	spawnOptions *SpawnOptions) (*VirtualMachine, error) {
+	spawnStart := time.Now()
+
 	index, err := s.Allocate()
 	if err != nil {
 		return nil, err
@@ -80,9 +82,11 @@ func Spawn(
 		"nfs_port", instance.nfsPort,
 	)
 
+	overlayStart := time.Now()
 	if err := agentfs.PrepareOverlay(ctx, instance.agentID, spawnOptions.Rootfs, spawnOptions.AgentfsData); err != nil {
 		return nil, fmt.Errorf("prepare agentfs: %w", err)
 	}
+	phaseOverlayPrep := time.Since(overlayStart)
 	slog.Info("VM agentfs overlay ready",
 		"vm_id", instance.id,
 		"data", spawnOptions.AgentfsData,
@@ -169,9 +173,11 @@ func Spawn(
 		"tap", instance.tapDev,
 		"bridge", BridgeName,
 	)
+	fcBootStart := time.Now()
 	if err := m.Start(ctx); err != nil {
 		return nil, fmt.Errorf("start machine: %w", err)
 	}
+	phaseFcBoot := time.Since(fcBootStart)
 
 	instance.machine = m
 	s.AddVirtualMachine(instance)
@@ -196,14 +202,23 @@ func Spawn(
 	// Wait for sshd inside the VM before announcing readiness. tap+IP exist as
 	// soon as Start returns; userspace sshd needs another second or two.
 	if vmIP := instance.GetVMIP(); vmIP != "" {
+		sshdProbeStart := time.Now()
 		if err := waitForSshd(ctx, vmIP, guestSshPort, sshdProbeWait); err != nil {
 			slog.Warn("sshd probe timed out, announcing vm.ready anyway", "vm_id", instance.id, "err", err)
 		}
+		phaseSshdProbe := time.Since(sshdProbeStart)
+
 		if spawnOptions.Publisher != nil {
-			if err := spawnOptions.Publisher.PublishVMReady(ctx, instance.id, vmIP, guestSshPort); err != nil {
+			info := buildVMReadyInfo(ctx, instance, spawnOptions, vmIP, spawnStart, phaseOverlayPrep, phaseFcBoot, phaseSshdProbe)
+			if err := spawnOptions.Publisher.PublishVMReady(ctx, info); err != nil {
 				slog.Error("publish vm.ready failed", "vm_id", instance.id, "err", err)
 			} else {
-				slog.Info("Published vm.ready", "vm_id", instance.id, "host", vmIP, "port", guestSshPort)
+				slog.Info("Published vm.ready",
+					"vm_id", instance.id,
+					"host", vmIP,
+					"port", guestSshPort,
+					"boot_duration_ms", info.BootDurationMs,
+				)
 			}
 		}
 	}
@@ -288,6 +303,57 @@ func waitForSshd(ctx context.Context, host string, port int, timeout time.Durati
 		case <-time.After(sshdProbeTick):
 		}
 	}
+}
+
+// buildVMReadyInfo assembles the enriched payload for vm.ready. SDK metadata
+// calls (DescribeInstanceInfo, PID) are best-effort: failure leaves the
+// corresponding pointer nil but never aborts the publish, since the VM is
+// already reachable on SSH at this point.
+func buildVMReadyInfo(
+	ctx context.Context,
+	instance *VirtualMachine,
+	spawnOptions *SpawnOptions,
+	vmIP string,
+	spawnStart time.Time,
+	phaseOverlayPrep, phaseFcBoot, phaseSshdProbe time.Duration,
+) messaging.VMReadyInfo {
+	info := messaging.VMReadyInfo{
+		ID:                 instance.id,
+		Host:               vmIP,
+		Port:               guestSshPort,
+		ActualVcpus:        instance.vcpus,
+		ActualMemoryMib:    instance.memoryMib,
+		BootDurationMs:     time.Since(spawnStart).Milliseconds(),
+		ReadyAtUtc:         time.Now().UTC(),
+		SocketPath:         instance.socket,
+		TapDevice:          instance.tapDev,
+		MacAddress:         GuestMAC,
+		VmIp:               vmIP,
+		HostGatewayIp:      instance.hostTapIP,
+		NfsPort:            instance.nfsPort,
+		WorkerSlotIndex:    instance.index,
+		RootfsPath:         spawnOptions.Rootfs,
+		KernelPath:         spawnOptions.Kernel,
+		PhaseOverlayPrepMs: phaseOverlayPrep.Milliseconds(),
+		PhaseFcBootMs:      phaseFcBoot.Milliseconds(),
+		PhaseSshdProbeMs:   phaseSshdProbe.Milliseconds(),
+	}
+
+	if m := instance.machine; m != nil {
+		if fcInfo, err := m.DescribeInstanceInfo(ctx); err != nil {
+			slog.Warn("DescribeInstanceInfo failed; vmm metadata will be nil", "vm_id", instance.id, "err", err)
+		} else {
+			info.VmmVersion = fcInfo.VmmVersion
+			info.VmmState = fcInfo.State
+		}
+		if pid, err := m.PID(); err != nil {
+			slog.Warn("PID lookup failed; firecracker_pid will be nil", "vm_id", instance.id, "err", err)
+		} else {
+			info.FirecrackerPid = &pid
+		}
+	}
+
+	return info
 }
 
 // removeOverlayFiles deletes the per-agent overlay artefacts created by

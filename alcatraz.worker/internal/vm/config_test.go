@@ -4,15 +4,68 @@ import (
 	"testing"
 )
 
-func TestDefaultConfig(t *testing.T) {
-	cfg := DefaultConfig()
+func TestLoadConfig_DefaultsAreAbsoluteAndAnchoredToExecutable(t *testing.T) {
+	t.Setenv("WORKER_FIRECRACKER_BIN", "")
+	t.Setenv("WORKER_KERNEL_PATH", "")
+	t.Setenv("WORKER_ROOTFS_PATH", "")
+	t.Setenv("WORKER_AGENTFS_DATA", "")
+
+	cfg := LoadConfig()
 
 	if cfg.MaxVMs != DefaultMaxVMs {
 		t.Errorf("MaxVMs = %d, want %d", cfg.MaxVMs, DefaultMaxVMs)
 	}
-	if cfg.FirecrackerBin != FirecrackerBin {
-		t.Errorf("FirecrackerBin = %s, want %s", cfg.FirecrackerBin, FirecrackerBin)
+	for _, p := range []string{cfg.FirecrackerBin, cfg.Kernel, cfg.Rootfs, cfg.AgentfsData} {
+		if p == "" {
+			t.Errorf("expected non-empty default path")
+		}
 	}
+}
+
+func TestLoadConfig_EnvOverridesWin(t *testing.T) {
+	t.Setenv("WORKER_FIRECRACKER_BIN", "/custom/fc")
+	t.Setenv("WORKER_KERNEL_PATH", "/custom/vmlinux")
+	t.Setenv("WORKER_ROOTFS_PATH", "/custom/rootfs")
+	t.Setenv("WORKER_AGENTFS_DATA", "/custom/.agentfs")
+
+	cfg := LoadConfig()
+
+	if cfg.FirecrackerBin != "/custom/fc" {
+		t.Errorf("FirecrackerBin = %q", cfg.FirecrackerBin)
+	}
+	if cfg.Kernel != "/custom/vmlinux" {
+		t.Errorf("Kernel = %q", cfg.Kernel)
+	}
+	if cfg.Rootfs != "/custom/rootfs" {
+		t.Errorf("Rootfs = %q", cfg.Rootfs)
+	}
+	if cfg.AgentfsData != "/custom/.agentfs" {
+		t.Errorf("AgentfsData = %q", cfg.AgentfsData)
+	}
+}
+
+func TestValidateArtifacts_FailsWithReadableErrorWhenMissing(t *testing.T) {
+	t.Setenv("WORKER_FIRECRACKER_BIN", "/nonexistent/fc")
+	t.Setenv("WORKER_KERNEL_PATH", "/nonexistent/vmlinux")
+	t.Setenv("WORKER_ROOTFS_PATH", "/nonexistent/rootfs")
+
+	cfg := LoadConfig()
+	err := cfg.ValidateArtifacts()
+	if err == nil {
+		t.Fatal("expected validation error for nonexistent paths")
+	}
+	if !contains(err.Error(), "WORKER_FIRECRACKER_BIN") {
+		t.Errorf("expected error to mention env override; got: %v", err)
+	}
+}
+
+func contains(s, substr string) bool {
+	for i := 0; i+len(substr) <= len(s); i++ {
+		if s[i:i+len(substr)] == substr {
+			return true
+		}
+	}
+	return false
 }
 
 func TestApplyDefaults(t *testing.T) {
