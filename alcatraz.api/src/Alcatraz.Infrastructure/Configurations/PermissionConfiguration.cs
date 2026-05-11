@@ -14,7 +14,12 @@ namespace Alcatraz.Infrastructure.Configurations
 
             builder.HasQueryFilter(p => !p.IsDeleted);
 
-            builder.HasData(Permission.UsersRead, Permission.UsersWrite);
+            builder.HasData(
+                Permission.UsersRead,
+                Permission.UsersWrite,
+                Permission.SandboxesRead,
+                Permission.SandboxesWrite,
+                Permission.SandboxesSsh);
         }
     }
 }

@@ -8,4 +8,7 @@ public static class Permissions
     public const string PermissionsWrite = "permissions.write";
     public const string RolesRead = "roles.read";
     public const string RolesWrite = "roles.write";
+    public const string SandboxesRead = "sandboxes.read";
+    public const string SandboxesWrite = "sandboxes.write";
+    public const string SandboxesSsh = "sandboxes.ssh";
 }

@@ -6,6 +6,9 @@ public sealed class Permission
 {
     public static readonly Permission UsersRead = new(1, "users.read");
     public static readonly Permission UsersWrite = new(6, "users.write");
+    public static readonly Permission SandboxesRead = new(7, "sandboxes.read");
+    public static readonly Permission SandboxesWrite = new(8, "sandboxes.write");
+    public static readonly Permission SandboxesSsh = new(9, "sandboxes.ssh");
 
     public const int MaxSystemId = 10;
     public const int NameMaxLength = 100;

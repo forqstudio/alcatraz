@@ -5,9 +5,11 @@ using Alcatraz.Application.Sandboxes.DeleteSandbox;
 using Alcatraz.Application.Sandboxes.GetSandbox;
 using Alcatraz.Application.Sandboxes.IssueSshCertificate;
 using Alcatraz.Application.Sandboxes.ListSandboxes;
+using Alcatraz.Infrastructure.Authorization;
 using MediatR;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using DomainPermissions = Alcatraz.Domain.Users.Permissions;
 
 namespace Alcatraz.Api.Controllers.Sandboxes;
 
@@ -18,6 +20,7 @@ namespace Alcatraz.Api.Controllers.Sandboxes;
 public class SandboxesController(ISender sender) : ControllerBase
 {
     [HttpPost]
+    [HasPermission(DomainPermissions.SandboxesWrite)]
     public async Task<IActionResult> CreateSandbox(
         CreateSandboxRequest request,
         CancellationToken cancellationToken)
@@ -38,6 +41,7 @@ public class SandboxesController(ISender sender) : ControllerBase
     }
 
     [HttpGet]
+    [HasPermission(DomainPermissions.SandboxesRead)]
     public async Task<IActionResult> ListSandboxes(CancellationToken cancellationToken)
     {
         var result = await sender.Send(new ListSandboxesQuery(), cancellationToken);
@@ -48,6 +52,7 @@ public class SandboxesController(ISender sender) : ControllerBase
     }
 
     [HttpGet("{id:guid}")]
+    [HasPermission(DomainPermissions.SandboxesRead)]
     public async Task<IActionResult> GetSandbox(Guid id, CancellationToken cancellationToken)
     {
         var result = await sender.Send(new GetSandboxQuery(id), cancellationToken);
@@ -58,6 +63,7 @@ public class SandboxesController(ISender sender) : ControllerBase
     }
 
     [HttpDelete("{id:guid}")]
+    [HasPermission(DomainPermissions.SandboxesWrite)]
     public async Task<IActionResult> DeleteSandbox(Guid id, CancellationToken cancellationToken)
     {
         var result = await sender.Send(new DeleteSandboxCommand(id), cancellationToken);
@@ -68,6 +74,7 @@ public class SandboxesController(ISender sender) : ControllerBase
     }
 
     [HttpPost("{id:guid}/ssh-cert")]
+    [HasPermission(DomainPermissions.SandboxesSsh)]
     public async Task<IActionResult> IssueSshCertificate(
         Guid id,
         IssueSshCertificateRequest request,
