@@ -178,6 +178,17 @@ cat /etc/ssh/trusted_user_ca_keys         # the API's CA pubkey
 
 That's the proof: stock `ssh` + stock `sshd` accepted a cert minted by the API's CA, scoped to a specific sandbox UUID, with no shared keys ever changing hands and the trust files planted by the worker (not baked into the rootfs).
 
+### 7. Inspect usage
+
+While the sandbox is running, `GET /sandboxes/{id}/usage` returns a live in-progress view (provisioned totals against `now`, plus the latest cumulative counters from the worker's 60-second samples):
+
+```bash
+curl -sH "Authorization: Bearer $TOKEN" \
+  http://localhost:8080/api/v1/sandboxes/$ID/usage | jq
+```
+
+Once the sandbox has been deleted (next step), the same endpoint returns the **finalised** record instead — immutable, with the actual window end and final totals. `GET /sandboxes/usage` lists all finalised records for the caller. See [`../../docs/billing-metrics.md`](../../docs/billing-metrics.md) for what's measured.
+
 ## Negative cases worth trying
 
 | Scenario | Expected |

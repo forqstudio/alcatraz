@@ -15,4 +15,14 @@ public sealed class NatsOptions
     public string DestroyedSubject { get; set; } = "vm.destroyed";
 
     public string DestroyedQueueGroup { get; set; } = "api-vm-destroyed";
+
+    public string UsageSampleSubject { get; set; } = "vm.usage_sample";
+
+    public string UsageFinalSubject { get; set; } = "vm.usage_final";
+
+    public string UsageStreamName { get; set; } = "ALCATRAZ_USAGE";
+
+    public string UsageSampleConsumerName { get; set; } = "usage-sample-consumer";
+
+    public string UsageFinalConsumerName { get; set; } = "usage-final-consumer";
 }

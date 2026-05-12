@@ -68,11 +68,18 @@ func main() {
 	)
 
 	vm.SweepIPAM()
+	vm.SweepFailedScopes()
 
 	mgr := vm.NewVirtualMachineService(vmConfig)
 	slog.Info("VM service ready", "max_vms", mgr.GetMaxVMs())
 
-	publisher, err := messaging.NewPublisher(natsConfig.URL, natsConfig.ReadySubject, natsConfig.DestroyedSubject)
+	publisher, err := messaging.NewPublisher(
+		natsConfig.URL,
+		natsConfig.ReadySubject,
+		natsConfig.DestroyedSubject,
+		natsConfig.UsageSampleSubject,
+		natsConfig.UsageFinalSubject,
+	)
 	if err != nil {
 		logging.Fatal("Failed to create publisher", "err", err)
 	}

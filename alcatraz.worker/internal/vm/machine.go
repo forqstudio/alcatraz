@@ -8,6 +8,7 @@ import (
 
 	firecracker "github.com/firecracker-microvm/firecracker-go-sdk"
 
+	"alcatraz.worker/internal/metering"
 	"alcatraz.worker/internal/vm/agentfs"
 )
 
@@ -27,6 +28,7 @@ type VirtualMachine struct {
 
 	machine   *firecracker.Machine
 	nfsServer *agentfs.NFSServer
+	metering  *metering.Collector
 
 	mu sync.Mutex
 }

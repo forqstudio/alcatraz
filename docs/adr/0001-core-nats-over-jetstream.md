@@ -1,9 +1,9 @@
 # ADR-0001: Core NATS (no JetStream consumers) for inter-service messaging
 
-- **Status:** Accepted
+- **Status:** Accepted (lifecycle subjects only; partially carved out by [ADR-0012](0012-jetstream-for-billing-subjects.md) for the billing subjects)
 - **Date:** 2026-05-10
 - **Deciders:** Alcatraz core team
-- **Related:** [`../nats-broker.md`](../nats-broker.md), [`../../plans/architecture.md`](../../plans/architecture.md) (§ "API ↔ Worker integration (NATS)"), [`../../alcatraz.api/docs/outbox-pattern.md`](../../alcatraz.api/docs/outbox-pattern.md)
+- **Related:** [`0012-jetstream-for-billing-subjects.md`](0012-jetstream-for-billing-subjects.md), [`../nats-broker.md`](../nats-broker.md), [`../../plans/architecture.md`](../../plans/architecture.md) (§ "API ↔ Worker integration (NATS)"), [`../../alcatraz.api/docs/outbox-pattern.md`](../../alcatraz.api/docs/outbox-pattern.md)
 
 ## Context
 
@@ -27,11 +27,9 @@ The forces shaping the choice:
 
 ## Decision
 
-Use **core NATS** for all four current subjects (`vm.spawn`, `vm.destroy`, `vm.ready`, `vm.destroyed`). Do not declare JetStream streams or durable consumers in any service.
+Use **core NATS** for the four lifecycle subjects (`vm.spawn`, `vm.destroy`, `vm.ready`, `vm.destroyed`). The outbox is the single durability mechanism for command publishes; consumer-side losses are a known, observable failure mode that operators recover from manually for now.
 
-The broker container still runs with `-js` enabled (`docker-compose.yml:98`) so JetStream is available without a redeploy if and when we adopt it, but no code uses it.
-
-Treat the outbox as the single durability mechanism for command publishes; treat consumer-side losses as a known, observable failure mode that operators recover from manually for now.
+The broker container runs with `-js` enabled (`docker-compose.yml:98`); the `ALCATRAZ_USAGE` JetStream stream and its two pull consumers are declared at API startup by `JetStreamProvisioningHostedService`. See [ADR-0012](0012-jetstream-for-billing-subjects.md) for the carve-out rationale — in short, billing data has no upstream outbox and no in-DB reconciliation, so the trade-offs that justify core NATS for lifecycle do not hold for usage events.
 
 ## Consequences
 
@@ -53,11 +51,11 @@ Treat the outbox as the single durability mechanism for command publishes; treat
 
 ### When to revisit
 
-Promote `vm.*` to JetStream durable consumers when **any** of the following becomes true:
+Promote the **lifecycle** `vm.*` subjects to JetStream when **any** of the following becomes true:
 
 - We see more than a handful of stuck-sandbox incidents per month attributable to consumer-down windows.
-- We add a third bounded context that consumes `vm.ready` (e.g. a billing/usage projector) and would want history on first deploy.
+- ~~We add a third bounded context that consumes `vm.ready`~~ — happened; resolved by carving out billing onto its own stream rather than migrating lifecycle. See [ADR-0012](0012-jetstream-for-billing-subjects.md).
 - We need to scale `alcatraz.api` horizontally with strong "exactly one replica processes each `vm.ready`" guarantees (the queue group already handles this for liveness, but JetStream gives us redelivery if the chosen replica crashes mid-handler).
 - We adopt schema versioning that requires holding the *prior* version's events long enough for migration.
 
-The migration path is incremental: declare a stream that captures `vm.>`, point new durable consumers at it on the API and routes side, leave the worker on core NATS for `vm.spawn`/`vm.destroy` (the outbox already covers that direction), then deprecate the core subscriptions.
+The migration path remains incremental: declare a stream that captures `vm.spawn`/`vm.destroy`/`vm.ready`/`vm.destroyed`, point new durable consumers at it on the API and routes side, leave the worker on core NATS for the command direction (the outbox already covers that), then deprecate the core subscriptions. The billing stream (`ALCATRAZ_USAGE`) is independent and stays as-is.

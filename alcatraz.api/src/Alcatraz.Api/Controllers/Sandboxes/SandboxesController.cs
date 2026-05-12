@@ -5,6 +5,7 @@ using Alcatraz.Application.Sandboxes.DeleteSandbox;
 using Alcatraz.Application.Sandboxes.GetSandbox;
 using Alcatraz.Application.Sandboxes.IssueSshCertificate;
 using Alcatraz.Application.Sandboxes.ListSandboxes;
+using Alcatraz.Application.Sandboxes.Usage;
 using Alcatraz.Infrastructure.Authorization;
 using MediatR;
 using Microsoft.AspNetCore.Authorization;
@@ -83,6 +84,28 @@ public class SandboxesController(ISender sender) : ControllerBase
         var result = await sender.Send(
             new IssueSshCertificateCommand(id, request.SshPublicKey),
             cancellationToken);
+
+        return result.IsSuccess
+            ? Ok(result.Value)
+            : result.Error.ToFailureActionResult();
+    }
+
+    [HttpGet("usage")]
+    [HasPermission(DomainPermissions.SandboxesRead)]
+    public async Task<IActionResult> ListSandboxUsage(CancellationToken cancellationToken)
+    {
+        var result = await sender.Send(new ListSandboxUsageQuery(), cancellationToken);
+
+        return result.IsSuccess
+            ? Ok(result.Value)
+            : result.Error.ToFailureActionResult();
+    }
+
+    [HttpGet("{id:guid}/usage")]
+    [HasPermission(DomainPermissions.SandboxesRead)]
+    public async Task<IActionResult> GetSandboxUsage(Guid id, CancellationToken cancellationToken)
+    {
+        var result = await sender.Send(new GetSandboxUsageQuery(id), cancellationToken);
 
         return result.IsSuccess
             ? Ok(result.Value)

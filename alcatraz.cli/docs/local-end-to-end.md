@@ -1,6 +1,6 @@
 # Local End-to-End Demo (CLI)
 
-This walks through `alcatraz.cli` against the local stack: **device-flow login → create sandbox → wait for the worker to boot the Firecracker VM → fetch SSH cert → SSH into the sandbox → delete and watch it tear down**.
+This walks through `alcatraz.cli` against the local stack: **device-flow login → create sandbox → wait for the worker to boot the Firecracker VM → fetch SSH cert → SSH into the sandbox → inspect live usage → delete and watch it tear down**.
 
 If you want the curl-only walkthrough that exercises the API directly, see [`../alcatraz.api/docs/local-end-to-end.md`](../../alcatraz.api/docs/local-end-to-end.md).
 
@@ -132,22 +132,39 @@ ssh-keygen -L -f ~/.config/alcatraz/certs/$ID-cert.pub
 
 In local dev (no `Gateway:Host` configured on the API), the cert response carries the worker-reported VM IP on the `172.16.0.0/24` bridge — directly reachable from the host because the worker runs in the host's network namespace. In a `--profile gateway` deployment, the cert points at Traefik instead.
 
-## 8. Delete
+## 8. Inspect live usage
+
+While the sandbox is still running, `alcatraz usage <id>` shows the in-flight billing view: provisioned vCPU-seconds and MiB-seconds against `now`, plus the latest cumulative CPU + network counters from the worker's 60-second samples.
+
+```bash
+alcatraz usage "$ID"
+# Panel headed "in progress"; Window end = "now".
+
+alcatraz usage      # list view across all your sandboxes (finalised only — empty until step 9)
+```
+
+For what's actually measured and how the pipeline works end-to-end, see [`../../docs/billing-metrics.md`](../../docs/billing-metrics.md).
+
+## 9. Delete
 
 ```bash
 alcatraz sandbox delete "$ID"
 ```
 
-Status transitions: `Running` → `Deleting` immediately (API publishes `vm.destroy`), then `Deleted` once the worker has stopped Firecracker, CNI has torn down the bridge, and the worker has published `vm.destroyed` (~5–10s end-to-end).
+Status transitions: `Running` → `Deleting` immediately (API publishes `vm.destroy`), then `Deleted` once the worker has stopped Firecracker, CNI has torn down the bridge, and the worker has published `vm.destroyed` (~5–10s end-to-end). The worker also publishes `vm.usage_final` on JetStream **before** `vm.destroyed`, so a finalised usage row is durably stored by the time the sandbox flips to `Deleted`.
 
 ```bash
 alcatraz sandbox get "$ID"
 # expect: status=Deleted
+
+alcatraz usage "$ID"
+# Panel headed "finalised <timestamp>"; window end = real exit time;
+# totals are immutable.
 ```
 
 If a VM exits unexpectedly (kernel panic, OOM, host kill) while in `Provisioning` or `Running`, the same `vm.destroyed` consumer transitions the sandbox to `Failed` instead.
 
-## 9. Tear down
+## 10. Tear down
 
 ```bash
 docker compose down

@@ -5,6 +5,7 @@ using Alcatraz.Cli.Commands.Sandboxes.DeleteSandbox;
 using Alcatraz.Cli.Commands.Sandboxes.GetSandbox;
 using Alcatraz.Cli.Commands.Sandboxes.IssueSshCertificate;
 using Alcatraz.Cli.Commands.Sandboxes.ListSandboxes;
+using Alcatraz.Cli.Commands.Sandboxes.Usage;
 using Alcatraz.Cli.Commands.Ssh;
 using Alcatraz.Cli.Commands.WhoAmI;
 using Alcatraz.Cli.Common.Configuration;
@@ -54,6 +55,9 @@ public static class CliBootstrap
                 b.AddCommand<DeleteSandboxCommand>("delete").WithDescription("Mark a sandbox for deletion.");
                 b.AddCommand<IssueSshCertificateCommand>("ssh-cert").WithDescription("Issue an SSH cert for a sandbox.");
             });
+
+            config.AddCommand<UsageCommand>("usage")
+                .WithDescription("Show finalised billing usage for your sandboxes.");
 
             config.AddCommand<SshCommand>("ssh")
                 .WithDescription("SSH into a sandbox.");

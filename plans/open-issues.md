@@ -27,11 +27,12 @@ Tracker for everything that's *not* in `architecture.md`. Severity tags:
 - **[P1] `alcatraz.routes` loses state on restart.** Plain NATS subscribe; no JetStream durable consumer, no startup snapshot. Bounce routes and every active sandbox is unrouted until the next `vm.ready`/`vm.destroyed`. Either JetStream durable consumers, or a `routes.requestSnapshot` reply pattern from the API.
 - **[P1] No timeouts on `m.Start` / `m.StopVMM` / `m.Wait`.** A wedged Firecracker hangs the spawn handler. Add timeouts; force-kill on timeout; mark sandbox `Failed`.
 - **[P1] `cni_sweep.go` only sweeps IPAM**, not orphaned `fc-tap*` or netns. Worker crash → manual cleanup before restart. Extend to reap orphan TAPs + netns at startup.
+- **[P1] No final usage record when the worker crashes mid-sandbox.** Intermediate `vm.usage_sample` rows are persisted via JetStream, but `vm.usage_final` is only published in the post-`m.Wait()` cleanup goroutine; a worker crash skips it entirely. Provisioned billing is still derivable from `Sandbox.ReadyAtUtc/DeletedOnUtc`, but actual CPU/network totals are lost. Sweep job: on worker restart, find sandboxes that exited without a `sandbox_usage_records` row and synthesise the final from the last sample. ([ADR-0012](../docs/adr/0012-jetstream-for-billing-subjects.md))
 
 ## Resource hardening
 
-- **[P1] No host-level cgroup caps per Firecracker.** Slot pool caps concurrency but no memory/CPU limits per VM. Wrap each Firecracker process in a transient systemd scope (`MemoryMax`, `CPUQuota`).
-- **[P1] No disk cap on AgentFS overlays.** A guest `dd if=/dev/zero` fills the host. Cap overlay size; fail spawn if exceeded.
+- **[P1] No host-level cgroup *caps* per Firecracker.** Each Firecracker process now runs in its own transient `systemd-run --scope` unit under `alcatraz.slice` (shipped as part of the billing pipeline — see [ADR-0012](../docs/adr/0012-jetstream-for-billing-subjects.md)), giving cgroup isolation and per-VM CPU accounting. But no `MemoryMax` / `CPUQuota` limits are set — a guest can still consume its provisioned RAM in full and any host CPU the scheduler gives it. Wire `--property=MemoryMax=... --property=CPUQuota=...` into the `systemd-run` invocation in `alcatraz.worker/internal/vm/spawn.go`.
+- **[P1] No disk cap on AgentFS overlays.** A guest `dd if=/dev/zero` fills the host. Cap overlay size; fail spawn if exceeded. (Same gap also blocks shipping the disk dimension in billing — see below.)
 
 ## Code hygiene
 
@@ -45,6 +46,7 @@ Tracker for everything that's *not* in `architecture.md`. Severity tags:
 - **[P2] `/health` doesn't gate on NATS or Postgres reachability.** Add dependency checks.
 - **[P2] No cert issuance audit table.** Issuance is logged but not persisted. Schema: `(sandbox_id, owner_user_id, key_fingerprint, valid_until_utc, issued_at_utc, request_ip)`.
 - **[P2] No sandbox-scoped correlation ID.** Stamp at create; propagate through API/worker/routes logs.
+- **[P2] No DLQ monitoring for billing JetStream consumers.** A message that fails `MaxDeliver` times lands in `$JS.EVENT.ADVISORY.CONSUMER.MAX_DELIVERIES`; nothing reads that subject today. Stand up a consumer that surfaces poison messages as an alertable signal. ([ADR-0012](../docs/adr/0012-jetstream-for-billing-subjects.md))
 
 ## CLI polish
 
@@ -74,7 +76,8 @@ Tracker for everything that's *not* in `architecture.md`. Severity tags:
 - **[deferred] Keycloak production hardening.** External Postgres for Keycloak, brute-force protection enabled, TOTP/WebAuthn on the admin realm.
 - **[deferred] Traefik HA.** Single replica fine for the demo. With more replicas the no-queue-group fanout subscription on `alcatraz.routes` is correct; add a TCP load balancer in front.
 - **[deferred] Rate limiting / DoS at the edge.** Defer to upstream LB or Cloudflare.
-- **[deferred] Billing / metering.** Out of scope per design. The cert-issuance audit table (P2 above) plus a sandbox-lifecycle audit table give you the raw data when you wire it later.
+- **[deferred] Disk dimension in billing.** Provisioned + actual vCPU / RAM / network are shipped ([ADR-0012](../docs/adr/0012-jetstream-for-billing-subjects.md), [`../docs/billing-metrics.md`](../docs/billing-metrics.md)); disk is not. Rootfs is served via NFS so Firecracker has no virtio-blk counters to read, and there is no per-sandbox storage quota (see the AgentFS overlay cap item in [Resource hardening](#resource-hardening)). Disk billing waits on either an AgentFS quota or NFS-layer byte counters.
+- **[deferred] Payment provider integration.** The billing pipeline writes immutable `sandbox_usage_records` rows; turning those into invoices needs a payment provider (Stripe, etc.) and a pricing model. Both are out of scope for this repo.
 
 ## Known cosmetic
 

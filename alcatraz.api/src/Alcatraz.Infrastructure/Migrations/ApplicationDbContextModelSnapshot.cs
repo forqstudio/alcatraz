@@ -286,6 +286,91 @@ namespace Alcatraz.Infrastructure.Migrations
                     b.ToTable("sandboxes", (string)null);
                 });
 
+            modelBuilder.Entity("Alcatraz.Domain.Sandboxes.Usage.SandboxUsageRecord", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<long?>("ActualCpuUsageUsec")
+                        .HasColumnType("bigint")
+                        .HasColumnName("actual_cpu_usage_usec");
+
+                    b.Property<long?>("ActualNetRxBytes")
+                        .HasColumnType("bigint")
+                        .HasColumnName("actual_net_rx_bytes");
+
+                    b.Property<long?>("ActualNetTxBytes")
+                        .HasColumnType("bigint")
+                        .HasColumnName("actual_net_tx_bytes");
+
+                    b.Property<DateTime>("BillingWindowEndUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("billing_window_end_utc");
+
+                    b.Property<DateTime>("BillingWindowStartUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("billing_window_start_utc");
+
+                    b.Property<DateTime>("FinalisedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("finalised_at_utc");
+
+                    b.Property<long>("ProvisionedMemoryMibSeconds")
+                        .HasColumnType("bigint")
+                        .HasColumnName("provisioned_memory_mib_seconds");
+
+                    b.Property<long>("ProvisionedVcpuSeconds")
+                        .HasColumnType("bigint")
+                        .HasColumnName("provisioned_vcpu_seconds");
+
+                    b.Property<int>("SampleCount")
+                        .HasColumnType("integer")
+                        .HasColumnName("sample_count");
+
+                    b.HasKey("Id")
+                        .HasName("pk_sandbox_usage_records");
+
+                    b.ToTable("sandbox_usage_records", (string)null);
+                });
+
+            modelBuilder.Entity("Alcatraz.Domain.Sandboxes.Usage.SandboxUsageSample", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<long?>("CpuUsageUsecCumulative")
+                        .HasColumnType("bigint")
+                        .HasColumnName("cpu_usage_usec_cumulative");
+
+                    b.Property<long?>("NetRxBytesCumulative")
+                        .HasColumnType("bigint")
+                        .HasColumnName("net_rx_bytes_cumulative");
+
+                    b.Property<long?>("NetTxBytesCumulative")
+                        .HasColumnType("bigint")
+                        .HasColumnName("net_tx_bytes_cumulative");
+
+                    b.Property<DateTime>("SampledAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("sampled_at_utc");
+
+                    b.Property<Guid>("SandboxId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("sandbox_id");
+
+                    b.HasKey("Id")
+                        .HasName("pk_sandbox_usage_samples");
+
+                    b.HasIndex("SandboxId", "SampledAtUtc")
+                        .IsUnique()
+                        .HasDatabaseName("ix_sandbox_usage_samples_sandbox_id_sampled_at_utc");
+
+                    b.ToTable("sandbox_usage_samples", (string)null);
+                });
+
             modelBuilder.Entity("Alcatraz.Domain.Users.Permission", b =>
                 {
                     b.Property<int>("Id")
@@ -826,6 +911,26 @@ namespace Alcatraz.Infrastructure.Migrations
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired()
                         .HasConstraintName("fk_sandboxes_user_owner_user_id");
+                });
+
+            modelBuilder.Entity("Alcatraz.Domain.Sandboxes.Usage.SandboxUsageRecord", b =>
+                {
+                    b.HasOne("Alcatraz.Domain.Sandboxes.Sandbox", null)
+                        .WithOne()
+                        .HasForeignKey("Alcatraz.Domain.Sandboxes.Usage.SandboxUsageRecord", "Id")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("fk_sandbox_usage_records_sandboxes_id");
+                });
+
+            modelBuilder.Entity("Alcatraz.Domain.Sandboxes.Usage.SandboxUsageSample", b =>
+                {
+                    b.HasOne("Alcatraz.Domain.Sandboxes.Sandbox", null)
+                        .WithMany()
+                        .HasForeignKey("SandboxId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("fk_sandbox_usage_samples_sandboxes_sandbox_id");
                 });
 
             modelBuilder.Entity("Alcatraz.Domain.Users.RolePermission", b =>

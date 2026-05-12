@@ -95,7 +95,9 @@ services:
   alcatraz-nats:
     image: nats:2.10
     container_name: Alcatraz.Nats
-    command: ["-js", "-m", "8222"]
+    command: ["-js", "-sd", "/data/jetstream", "-m", "8222"]
+    volumes:
+      - nats_jetstream:/data/jetstream
     ports:
       - "4222:4222"
       - "8222:8222"
@@ -172,3 +174,4 @@ volumes:
     name: alcatraz_ca
   traefik_dynamic:
   traefik_acme:
+  nats_jetstream:

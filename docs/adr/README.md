@@ -8,7 +8,7 @@ Speculative work-not-yet-shipped lives in [`../../plans/open-issues.md`](../../p
 
 | #    | Title                                                                              | Decision (one line)                                                                       |
 | ---- | ---------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
-| 0001 | [Core NATS over JetStream](0001-core-nats-over-jetstream.md)                       | Use core NATS for all four `vm.*` subjects; outbox provides publish-side durability.      |
+| 0001 | [Core NATS over JetStream](0001-core-nats-over-jetstream.md)                       | Use core NATS for lifecycle `vm.*` subjects; outbox provides publish-side durability. Carved out for billing by 0012. |
 | 0002 | [Clean Architecture, DDD, CQRS for `alcatraz.api`](0002-clean-architecture-ddd-cqrs-for-api.md) | Four-layer Clean Architecture; aggregates with Result pattern; CQRS via MediatR.        |
 | 0003 | [Transactional outbox](0003-transactional-outbox.md)                               | Domain events serialise into `outbox_messages` in the same tx as the aggregate write.     |
 | 0004 | [Customer SSH access](0004-customer-ssh-access.md)                                 | SSH CA + per-sandbox principals + SNI gateway for cryptographic per-tenant isolation.     |
@@ -19,6 +19,7 @@ Speculative work-not-yet-shipped lives in [`../../plans/open-issues.md`](../../p
 | 0009 | [Idempotent Keycloak user registration](0009-keycloak-idempotent-user-registration.md) | `POST /users/register` reconciles on Keycloak `409`; registration doubles as recovery.   |
 | 0010 | [Single root `docker-compose.yml`](0010-single-root-docker-compose.md)             | One compose file at the repo root; per-environment variation via Compose profiles.        |
 | 0011 | [Devcontainer scope = code + build only](0011-devcontainer-scope.md)               | Devcontainer covers toolchains and build; KVM/Docker/worker stay on the host.             |
+| 0012 | [JetStream for billing subjects](0012-jetstream-for-billing-subjects.md)           | Two new usage subjects ride JetStream with explicit ack-after-DB-commit; lifecycle stays on core NATS. |
 
 ## Authoring conventions
 

@@ -4,6 +4,7 @@ using System.Text.Json;
 using Alcatraz.Cli.Commands.Login;
 using Alcatraz.Cli.Commands.Sandboxes;
 using Alcatraz.Cli.Commands.Sandboxes.IssueSshCertificate;
+using Alcatraz.Cli.Commands.Sandboxes.Usage;
 
 namespace Alcatraz.Cli.Common.Api;
 
@@ -115,6 +116,20 @@ internal sealed class AlcatrazApiClient(HttpClient http) : IAlcatrazApiClient
             ct);
         await EnsureSandboxSuccessAsync(response, sandboxId, ct);
         return (await response.Content.ReadFromJsonAsync<SshCertificateResponse>(Json, ct))!;
+    }
+
+    public async Task<SandboxUsageResponse> GetSandboxUsageAsync(Guid sandboxId, CancellationToken ct = default)
+    {
+        using var response = await http.GetAsync($"api/v1/sandboxes/{sandboxId}/usage", ct);
+        await EnsureSandboxSuccessAsync(response, sandboxId, ct);
+        return (await response.Content.ReadFromJsonAsync<SandboxUsageResponse>(Json, ct))!;
+    }
+
+    public async Task<IReadOnlyList<SandboxUsageResponse>> ListSandboxUsageAsync(CancellationToken ct = default)
+    {
+        using var response = await http.GetAsync("api/v1/sandboxes/usage", ct);
+        await EnsureSandboxSuccessAsync(response, sandboxId: null, ct);
+        return (await response.Content.ReadFromJsonAsync<List<SandboxUsageResponse>>(Json, ct))!;
     }
 
     private async Task<HttpResponseMessage> SendRawAsync(HttpRequestMessage request, CancellationToken ct)

@@ -45,6 +45,7 @@ Letting an AI coding agent loose on your laptop is a bad idea. Alcatraz gives ea
 - Stock `ssh` — no plugin, no proxy daemon. The CLI just execs OpenSSH with a cert.
 - 24-hour user certificates scoped to a single sandbox UUID; expiry is the revocation primitive.
 - Filesystem changes survive sandbox restarts via an AgentFS overlay; the base image is reusable.
+- `alcatraz usage [<id>]` shows live provisioned + actual usage per sandbox (CPU, memory, network).
 
 ### For operators
 
@@ -65,6 +66,7 @@ Letting an AI coding agent loose on your laptop is a bad idea. Alcatraz gives ea
 - **Atomic Traefik reloads** — `alcatraz.routes` writes the dynamic config via a temp-file + rename so Traefik never reads a half-written file during hot-reload.
 - **Dual-mode endpoint resolution** — when `Gateway__Host` is unset, the cert-issue response carries the per-sandbox VM IP (local dev, direct-to-bridge). When set, it carries Traefik's address (production). Same code path; one config flips it.
 - **Cert-only auth** — the API shells out to `ssh-keygen -s` to mint a 24-hour user cert with `principal = sandbox-UUID`. No per-customer pubkey is ever stored, and no credential persists past TTL.
+- **Per-sandbox usage metering** — each Firecracker process runs in its own `systemd-run --scope` for an isolated cgroup; a worker-side collector publishes 60 s samples and a final on exit over JetStream. The API consumes with explicit ack-after-DB-commit, so usage data is never silently dropped. Detail: [`docs/billing-metrics.md`](docs/billing-metrics.md).
 
 ## Architecture overview
 
@@ -359,26 +361,32 @@ alcatraz/
 # Go components
 make -C alcatraz.worker test
 make -C alcatraz.routes test
+
+# .NET — unit tests run anywhere; integration tests need Docker (testcontainers)
+dotnet test alcatraz.api/Alcatraz.sln
 ```
 
-The .NET projects (`alcatraz.api`, `alcatraz.cli`) don't ship a test suite yet — exercise them via the end-to-end walkthrough above and the `curl` cases in `alcatraz.api/docs/local-end-to-end.md`.
+`Alcatraz.Domain.UnitTests` and `Alcatraz.Application.UnitTests` are pure unit tests. `Alcatraz.Application.IntegrationTests` spins up Postgres / Keycloak / Redis / NATS via testcontainers and exercises handlers against the real DB. `Alcatraz.Api.FunctionalTests` exercises HTTP endpoints end-to-end. The CLI is exercised via the walkthrough above and the `curl` cases in `alcatraz.api/docs/local-end-to-end.md`.
 
 ## Status
 
 **Shipped:**
 
 - `alcatraz.cli`, `alcatraz.api`, `alcatraz.worker`, `alcatraz.core`, `alcatraz.routes` — all five components run end-to-end. The local and `--profile gateway` walkthroughs above are the canonical proof.
+- Per-sandbox billing metrics (CPU, memory, network) via worker → JetStream → DB → `alcatraz usage`. See [`docs/billing-metrics.md`](docs/billing-metrics.md).
 
 **Not yet shipped:**
 
 - KRL-based sub-TTL certificate revocation (today, expiry is the only revocation mechanism).
-- .NET test suite for `alcatraz.api` and `alcatraz.cli`.
 - NATS auth/TLS in the production compose profile.
+- Disk billing dimension (rootfs is NFS-backed; quota / byte-counter design still to do).
 
 ## Design references
 
 - [`plans/architecture.md`](plans/architecture.md) — consolidated record of shipped decisions: SSH CA, device flow, NATS contract, Traefik gateway, overlay writes, compose layout.
 - [`plans/open-issues.md`](plans/open-issues.md) — remaining work tagged by severity (tenant isolation, secrets, reliability, observability, deferred items).
+- [`docs/billing-metrics.md`](docs/billing-metrics.md) — what gets measured, how customers see it, and the worker → JetStream → API pipeline.
+- [`plans/billing-usage-metering.md`](plans/billing-usage-metering.md) — full billing design doc (systemd-run rationale, JetStream config, schema, failure modes).
 
 ## Deployment
 

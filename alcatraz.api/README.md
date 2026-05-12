@@ -32,6 +32,7 @@ This API never holds a customer's SSH private key, never sees raw Keycloak crede
 - The SSH certificate authority — 24h user certs, principal = sandbox UUID, signed by shelling out to `ssh-keygen -s`. Cert responses carry the routable endpoint: `Gateway:Host/Port` if configured (production via Traefik), otherwise the per-sandbox host/port the worker reported.
 - User registration and the role/permission model (Keycloak owns identity; the app DB owns authorization).
 - The transactional outbox that turns `SandboxRequested` / `SandboxDeletionRequested` domain events into NATS publishes.
+- Per-sandbox usage records and samples written by the JetStream consumers (`VmUsageSampleConsumer`, `VmUsageFinalConsumer`). The `JetStreamProvisioningHostedService` declares the `ALCATRAZ_USAGE` stream + its two pull consumers idempotently at startup. Details: [`../docs/billing-metrics.md`](../docs/billing-metrics.md).
 
 ## What this component does NOT own
 
@@ -52,6 +53,8 @@ This API never holds a customer's SSH private key, never sees raw Keycloak crede
 | GET  | `/api/v1/sandboxes/{id}` | bearer | Owner-scoped lookup (404 on miss *or* not-yours) |
 | DELETE | `/api/v1/sandboxes/{id}` | bearer | Mark deleting (publishes to `vm.destroy`) |
 | POST | `/api/v1/sandboxes/{id}/ssh-cert` | bearer | Sign a short-lived user cert for the caller's pubkey |
+| GET  | `/api/v1/sandboxes/usage` | bearer | List the caller's finalised usage records (newest first). See [`../docs/billing-metrics.md`](../docs/billing-metrics.md). |
+| GET  | `/api/v1/sandboxes/{id}/usage` | bearer | One sandbox; live in-progress view while running, finalised record once exited. |
 | POST | `/api/v1/users/register`, `/api/v1/users/login` | anon | User registration + password-grant login (bootstrap path; CLI uses device flow instead). Register is **idempotent** — a duplicate email returns the existing user id, and a missing local DB row is reconciled against the existing Keycloak identity. |
 
 For the design rationale and the full request lifecycle, see [`docs/customer-cli-and-sandboxes.md`](docs/customer-cli-and-sandboxes.md).
@@ -80,7 +83,7 @@ For the design rationale and the full request lifecycle, see [`docs/customer-cli
 | Data | PostgreSQL via EF Core, Dapper for read-heavy queries |
 | Cache | Redis (StackExchange.Redis) |
 | Identity | Keycloak (JWT Bearer + OAuth 2.0 device flow) |
-| Messaging | NATS.Net (publishes `vm.spawn`, `vm.destroy`; consumes `vm.ready` and `vm.destroyed` via `BackgroundService`s) |
+| Messaging | NATS.Net — core NATS for lifecycle (publishes `vm.spawn`/`vm.destroy`, consumes `vm.ready`/`vm.destroyed`); JetStream for billing (consumes `vm.usage_sample`/`vm.usage_final`). See [`../docs/nats-broker.md`](../docs/nats-broker.md). |
 | CQRS / mediator | MediatR |
 | Validation | FluentValidation |
 | Background jobs | Quartz.NET (outbox drain) |
@@ -113,7 +116,7 @@ src/
 ├── Alcatraz.Domain/             # aggregates (Sandbox, User), domain events, errors, repository interfaces
 ├── Alcatraz.Application/        # use cases — commands, queries, validators, handlers
 │   ├── Auth/                      # InitiateDeviceAuth, ExchangeDeviceToken
-│   ├── Sandboxes/                 # CreateSandbox, DeleteSandbox, GetSandbox, ListSandboxes, IssueSshCertificate, MarkSandboxRunning
+│   ├── Sandboxes/                 # CreateSandbox, DeleteSandbox, GetSandbox, ListSandboxes, IssueSshCertificate, MarkSandboxRunning, MarkSandboxUsageRecorded, RecordSandboxUsageSample, Usage queries
 │   └── Users/                     # Register, Login, GetLoggedInUser
 ├── Alcatraz.Infrastructure/     # EF Core, Keycloak clients, NATS publisher, ssh-keygen CA, Quartz outbox
 └── Alcatraz.Api/                # controllers, middleware, DI composition, appsettings

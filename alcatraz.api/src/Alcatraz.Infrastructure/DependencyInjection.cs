@@ -11,6 +11,7 @@ using Alcatraz.Domain.Abstractions;
 using Alcatraz.Domain.Apartments;
 using Alcatraz.Domain.Bookings;
 using Alcatraz.Domain.Sandboxes;
+using Alcatraz.Domain.Sandboxes.Usage;
 using Alcatraz.Domain.Users;
 using Alcatraz.Infrastructure.Authentication;
 using Alcatraz.Infrastructure.Authorization;
@@ -94,6 +95,12 @@ public static class DependencyInjection
         services.AddHostedService<VmReadyConsumer>();
 
         services.AddHostedService<VmDestroyedConsumer>();
+
+        services.AddHostedService<JetStreamProvisioningHostedService>();
+
+        services.AddHostedService<VmUsageSampleConsumer>();
+
+        services.AddHostedService<VmUsageFinalConsumer>();
     }
 
     private static void AddPersistence(IServiceCollection services, IConfiguration configuration)
@@ -114,6 +121,10 @@ public static class DependencyInjection
         services.AddScoped<IBookingRepository, BookingRepository>();
 
         services.AddScoped<ISandboxRepository, SandboxRepository>();
+
+        services.AddScoped<ISandboxUsageRecordRepository, SandboxUsageRecordRepository>();
+
+        services.AddScoped<ISandboxUsageSampleRepository, SandboxUsageSampleRepository>();
 
         services.AddScoped<IPermissionRepository, PermissionRepository>();
 

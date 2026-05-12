@@ -22,6 +22,8 @@ const (
 	DefaultDestroyedSubject   = "vm.destroyed"
 	DefaultDestroySubject     = "vm.destroy"
 	DefaultDestroyQueueGroup  = "worker-vm-destroy"
+	DefaultUsageSampleSubject = "vm.usage_sample"
+	DefaultUsageFinalSubject  = "vm.usage_final"
 )
 
 type Config struct {
@@ -32,6 +34,8 @@ type Config struct {
 	DestroyedSubject   string
 	DestroySubject     string
 	DestroyQueueGroup  string
+	UsageSampleSubject string
+	UsageFinalSubject  string
 }
 
 // LoadConfig returns the messaging config. It starts from DefaultConfig() and
@@ -64,17 +68,25 @@ func LoadConfig() (*Config, error) {
 	if v := os.Getenv("NATS_DESTROY_QUEUE_GROUP"); v != "" {
 		cfg.DestroyQueueGroup = v
 	}
+	if v := os.Getenv("NATS_USAGE_SAMPLE_SUBJECT"); v != "" {
+		cfg.UsageSampleSubject = v
+	}
+	if v := os.Getenv("NATS_USAGE_FINAL_SUBJECT"); v != "" {
+		cfg.UsageFinalSubject = v
+	}
 	return cfg, nil
 }
 
 func DefaultConfig() *Config {
 	return &Config{
-		URL:               DefaultURL,
-		Subject:           DefaultSubject,
-		QueueGroup:        DefaultQueueGroup,
-		ReadySubject:      DefaultReadySubject,
-		DestroyedSubject:  DefaultDestroyedSubject,
-		DestroySubject:    DefaultDestroySubject,
-		DestroyQueueGroup: DefaultDestroyQueueGroup,
+		URL:                DefaultURL,
+		Subject:            DefaultSubject,
+		QueueGroup:         DefaultQueueGroup,
+		ReadySubject:       DefaultReadySubject,
+		DestroyedSubject:   DefaultDestroyedSubject,
+		DestroySubject:     DefaultDestroySubject,
+		DestroyQueueGroup:  DefaultDestroyQueueGroup,
+		UsageSampleSubject: DefaultUsageSampleSubject,
+		UsageFinalSubject:  DefaultUsageFinalSubject,
 	}
 }

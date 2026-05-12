@@ -50,9 +50,11 @@ Detailed rationale for each shipped decision lives in [`../docs/adr/`](../docs/a
 
 ### API ↔ worker integration
 
-- [ADR-0001 — Core NATS over JetStream](../docs/adr/0001-core-nats-over-jetstream.md)
+- [ADR-0001 — Core NATS over JetStream (lifecycle subjects)](../docs/adr/0001-core-nats-over-jetstream.md)
 - [ADR-0005 — NATS as the only API ↔ worker coupling](../docs/adr/0005-nats-as-api-worker-coupling.md)
+- [ADR-0012 — JetStream for billing subjects](../docs/adr/0012-jetstream-for-billing-subjects.md)
 - Reference: [`../docs/nats-broker.md`](../docs/nats-broker.md) — full broker topology, producers, consumers, contracts, configuration.
+- Reference: [`../docs/billing-metrics.md`](../docs/billing-metrics.md) — what billing measures, how customers see it, the worker → JetStream → API pipeline.
 
 ### Local dev and tooling
 
@@ -70,6 +72,8 @@ Reference, not a decision — the API surface that exercises the ADRs above.
 | GET    | `/api/v1/sandboxes/{id}`              | bearer | Owner-scoped; not-yours = 404, never leak existence.                                               |
 | DELETE | `/api/v1/sandboxes/{id}`              | bearer | 202; raises `SandboxDeletionRequestedDomainEvent` → outbox → `vm.destroy`.                         |
 | POST   | `/api/v1/sandboxes/{id}/ssh-cert`     | bearer | `{sshPubkey}` → `{cert, validUntilUtc, gatewayHost, gatewayPort}`. Requires `Status == Running`.   |
+| GET    | `/api/v1/sandboxes/usage`             | bearer | Owner-scoped finalised usage records; newest first.                                                |
+| GET    | `/api/v1/sandboxes/{id}/usage`        | bearer | One sandbox; returns the finalised record if present, otherwise a live in-progress view computed from samples + the current clock. ([ADR-0012](../docs/adr/0012-jetstream-for-billing-subjects.md)) |
 
 Cert signing shells out to `ssh-keygen -s` (`openssh-client` in the API container). See [ADR-0004](../docs/adr/0004-customer-ssh-access.md) for the full trust chain.
 
@@ -83,6 +87,8 @@ These values are referenced across multiple ADRs; collected here for searchabili
 - **VM subnet:** `172.16.0.0/24` per worker, hardcoded in `cni/alcatraz-bridge.conflist`. Single-host only — multi-host needs per-host /24 carving.
 - **Sandbox lifecycle:** `Provisioning → Running → Deleting → Deleted`, plus `Failed` for unexpected exits. `MarkRunning` requires `Provisioning`; `MarkDestroyed` is idempotent on terminal states. `vm.destroyed` on `Provisioning|Running` → `Failed`; on `Deleting` → `Deleted`. ([ADR-0005](../docs/adr/0005-nats-as-api-worker-coupling.md))
 - **Owner key in domain:** local `users.id` Guid. Keycloak `sub` is read from `IUserContext` only at cert-signing time (for `key_id`). ([ADR-0006](../docs/adr/0006-keycloak-identity-provider.md))
+- **Billing window:** `Sandbox.ReadyAtUtc → DeletedOnUtc` (or `now` while in-flight). Dimensions: provisioned vCPU-s + MiB-s (computed); actual CPU usec (cgroup v2 `cpu.stat`) + net rx/tx bytes (Firecracker `/metrics`). Disk billing deferred. Persistence: `sandbox_usage_records` (one row per finalised sandbox, PK = sandbox_id) and `sandbox_usage_samples` (one row per 60s tick, unique on `(sandbox_id, sampled_at_utc)`). ([ADR-0012](../docs/adr/0012-jetstream-for-billing-subjects.md))
+- **Per-VM cgroup isolation:** each Firecracker process is wrapped in `systemd-run --scope --slice=alcatraz.slice --unit=alcatraz-vm-<id>.scope`. Deterministic cgroup path; systemd reaps the scope on exit. ([ADR-0012](../docs/adr/0012-jetstream-for-billing-subjects.md))
 
 ## Library / wiring conventions
 

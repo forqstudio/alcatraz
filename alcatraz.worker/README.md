@@ -27,16 +27,18 @@ This repository contains the build and launch scripts only. Generated artifacts 
 
    The guest's `/init` parses both args from `/proc/cmdline` and materialises them in tmpfs at `/run/ssh-config/{auth_principals/al,trusted_user_ca_keys}` before sshd starts. No pre-boot overlay writes happen on the worker host side.
 6. Worker starts an in-process NFSv3 server bound to the bridge gateway IP, exporting the overlay (host rootfs as read-only base layer + per-VM SQLite delta)
-7. Worker spawns Firecracker VM with `root=/dev/nfs` pointing to that NFS export
-8. After Firecracker reports started, worker probes `vm_ip:22` until sshd accepts (10s timeout) and publishes `vm.ready` on NATS with `{id, host, port}`. `alcatraz.api` consumes this event and transitions the sandbox to `Running`; `alcatraz.routes` (when present) updates Traefik's route table.
-9. On `vm.destroy`, worker calls `StopVMM` on the matching Firecracker process. Firecracker forwards the signal to the guest's PID 1 (`tini`, see [`alcatraz.core/README.md`](../alcatraz.core/README.md)) which propagates `SIGTERM` to `sshd` for a clean shutdown. On VM exit (whether triggered by a `vm.destroy` request or an unexpected crash), the SDK's `doCleanup()` invokes CNI DEL to release TAP, IP, and namespace; worker shuts down the NFS server goroutine, releases the slot, and publishes `vm.destroyed`. `alcatraz.api` consumes that and transitions the sandbox to `Deleted` (if it was `Deleting`) or `Failed` (if it was `Running` / `Provisioning`); `alcatraz.routes` (when present) drops the route.
+7. Worker spawns Firecracker VM with `root=/dev/nfs` pointing to that NFS export. The Firecracker process is wrapped in `systemd-run --scope --slice=alcatraz.slice --unit=alcatraz-vm-<id>.scope` so it lands in its own transient cgroup; systemd auto-cleans on exit. Firecracker is also configured with `MetricsPath=/run/alcatraz/<id>/metrics.fifo` so it emits per-VM network counters.
+8. After Firecracker reports started, worker probes `vm_ip:22` until sshd accepts (10s timeout) and publishes `vm.ready` on NATS with `{id, host, port}`. `alcatraz.api` consumes this event and transitions the sandbox to `Running`; `alcatraz.routes` (when present) updates Traefik's route table. The metering collector also kicks off here — see step 10.
+9. On `vm.destroy`, worker calls `StopVMM` on the matching Firecracker process. Firecracker forwards the signal to the guest's PID 1 (`tini`, see [`alcatraz.core/README.md`](../alcatraz.core/README.md)) which propagates `SIGTERM` to `sshd` for a clean shutdown. On VM exit (whether triggered by a `vm.destroy` request or an unexpected crash), the SDK's `doCleanup()` invokes CNI DEL to release TAP, IP, and namespace; worker shuts down the NFS server goroutine, flushes the final metering record, releases the slot, and publishes `vm.destroyed`. `alcatraz.api` consumes that and transitions the sandbox to `Deleted` (if it was `Deleting`) or `Failed` (if it was `Running` / `Provisioning`); `alcatraz.routes` (when present) drops the route.
+10. **Metering.** A `metering.Collector` (in `internal/metering/`) runs alongside each VM. Every 60 s it reads `cpu.stat` from the VM's systemd-scope cgroup and the latest JSON object from Firecracker's metrics fifo, then publishes a `vm.usage_sample` event on **JetStream**. On VM exit (post-`m.Wait()`), the collector publishes a `vm.usage_final` event with the totals — synchronously, awaiting PubAck — before `vm.destroyed` is published. `alcatraz.api` consumes both and persists the data. Details: [`../docs/billing-metrics.md`](../docs/billing-metrics.md).
 
 The practical effect is:
 - VMs can be spawned on-demand via NATS messages
 - Multiple workers can handle load balancing via queue groups
 - Each VM gets a unique IP on a shared bridge with NFS root via AgentFS
+- Each VM gets its own systemd-scope cgroup for per-VM CPU accounting
 - CNI plugins handle all networking setup and teardown automatically
-- The worker is decoupled from `alcatraz.api`: they only share NATS subjects (`vm.spawn` / `vm.destroy` inbound, `vm.ready` / `vm.destroyed` outbound).
+- The worker is decoupled from `alcatraz.api`: they share NATS subjects only — core NATS for lifecycle (`vm.spawn` / `vm.destroy` inbound, `vm.ready` / `vm.destroyed` outbound) and JetStream for billing (`vm.usage_sample` / `vm.usage_final` outbound).
 - **Note:** VMs on the same worker can currently communicate with each other via the shared bridge (see [docs/network-isolation.md](docs/network-isolation.md))
 
 ## Host Requirements
@@ -45,6 +47,7 @@ You need these on the host:
 - Ubuntu or another Linux host with `sudo`
 - KVM / Firecracker support
 - `firecracker` binary available (auto-resolved to v1.15.1 or PATH)
+- `systemd-run` on `PATH` (any systemd-based distro has it). Each Firecracker process is launched inside a transient scope under the `alcatraz.slice` for per-VM cgroup isolation and CPU accounting.
 - NATS server running
 - CNI plugins installed at `/opt/cni/bin` (bridge, host-local, tc-redirect-tap)
 - CNI conflist installed at `/etc/cni/net.d/alcatraz-bridge.conflist`
@@ -172,6 +175,8 @@ an error.
 | `NATS_DESTROYED_SUBJECT` | `vm.destroyed` | Subject the worker publishes to after VM exit + cleanup |
 | `NATS_DESTROY_SUBJECT` | `vm.destroy` | Subject the worker subscribes to for delete requests from the API |
 | `NATS_DESTROY_QUEUE_GROUP` | `worker-vm-destroy` | NATS queue group for `vm.destroy` consumers |
+| `NATS_USAGE_SAMPLE_SUBJECT` | `vm.usage_sample` | JetStream subject for periodic usage samples (60s cadence per running VM) |
+| `NATS_USAGE_FINAL_SUBJECT` | `vm.usage_final` | JetStream subject for the final usage record published on VM exit |
 | `WORKER_CA_PUBKEY_PATH` | `/run/alcatraz-ca/alcatraz_ca.pub` | API's SSH CA pubkey; read once at worker startup and embedded (base64) in each VM's kernel cmdline |
 | `WORKER_FIRECRACKER_BIN` | `<repo>/alcatraz.core/bin/firecracker-v1.15.1` | Firecracker binary. Default derived from `os.Executable()` (binary at `<repo>/alcatraz.worker/bin/alcatraz-worker` → core dir is the sibling of `alcatraz.worker/`). Override for non-standard layouts. |
 | `WORKER_KERNEL_PATH` | `<repo>/alcatraz.core/linux-amazon/vmlinux` | Guest kernel image. Same anchoring as above. |

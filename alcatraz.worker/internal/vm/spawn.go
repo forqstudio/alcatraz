@@ -11,9 +11,17 @@ import (
 	"time"
 
 	"alcatraz.worker/internal/messaging"
+	"alcatraz.worker/internal/metering"
 	"alcatraz.worker/internal/vm/agentfs"
 	firecracker "github.com/firecracker-microvm/firecracker-go-sdk"
 	"github.com/firecracker-microvm/firecracker-go-sdk/client/models"
+)
+
+const (
+	runDirRoot       = "/run/alcatraz"
+	cgroupRoot       = "/sys/fs/cgroup"
+	systemdSlice     = "alcatraz.slice"
+	meteringInterval = 60 * time.Second
 )
 
 type SpawnOptions struct {
@@ -88,6 +96,14 @@ func Spawn(
 		return nil, fmt.Errorf("prepare agentfs: %w", err)
 	}
 	phaseOverlayPrep := time.Since(overlayStart)
+
+	// Per-VM run dir holds the Firecracker metrics file. systemd owns the
+	// per-VM cgroup, so nothing else lands here.
+	runDir := filepath.Join(runDirRoot, instance.id)
+	if err := os.MkdirAll(runDir, 0o755); err != nil {
+		return nil, fmt.Errorf("mkdir run dir: %w", err)
+	}
+	metricsPath := filepath.Join(runDir, "metrics.fifo")
 	slog.Info("VM agentfs overlay ready",
 		"vm_id", instance.id,
 		"data", spawnOptions.AgentfsData,
@@ -119,6 +135,7 @@ func Spawn(
 		SocketPath:      instance.socket,
 		KernelImagePath: spawnOptions.Kernel,
 		KernelArgs:      bootArgs,
+		MetricsPath:     metricsPath,
 		MachineCfg: models.MachineConfiguration{
 			VcpuCount:  firecracker.Int64(int64(instance.vcpus)),
 			MemSizeMib: firecracker.Int64(int64(instance.memoryMib)),
@@ -145,6 +162,23 @@ func Spawn(
 		WithBin(spawnOptions.FirecrackerBin).
 		WithSocketPath(instance.socket).
 		Build(ctx)
+
+	// Wrap firecracker in a transient systemd scope so each VM gets its own
+	// cgroup at /sys/fs/cgroup/alcatraz.slice/alcatraz-vm-<id>.scope. systemd
+	// auto-cleans the scope on exit (--collect). cmd.Path/Args are mutated
+	// after Build() so the SDK still sets WithSocketPath/WithBin args first.
+	scopeUnit := fmt.Sprintf("alcatraz-vm-%s.scope", instance.id)
+	cmd.Path = "/usr/bin/systemd-run"
+	cmd.Args = append([]string{
+		"systemd-run",
+		"--scope",
+		"--collect",
+		"--quiet",
+		"--unit=" + scopeUnit,
+		"--slice=" + systemdSlice,
+		"--property=Delegate=yes",
+		"--",
+	}, cmd.Args...)
 
 	m, err := firecracker.NewMachine(ctx, cfg, firecracker.WithProcessRunner(cmd),
 		func(m *firecracker.Machine) {
@@ -224,6 +258,19 @@ func Spawn(
 		}
 	}
 
+	// Metering: the systemd scope path is deterministic from the unit name.
+	if spawnOptions.Publisher != nil {
+		cgroupPath := filepath.Join(cgroupRoot, systemdSlice, scopeUnit)
+		instance.metering = metering.Start(context.Background(), metering.Options{
+			SandboxID:   instance.id,
+			CgroupPath:  cgroupPath,
+			MetricsPath: metricsPath,
+			BootedAt:    spawnStart.UTC(),
+			Interval:    meteringInterval,
+			Publisher:   spawnOptions.Publisher,
+		})
+	}
+
 	s.cleanupWG.Add(1)
 	go func() {
 		defer s.cleanupWG.Done()
@@ -236,6 +283,20 @@ func Spawn(
 		if err := m.Wait(context.Background()); err != nil {
 			slog.Error("VM wait error", "vm_id", id, "err", err)
 		}
+
+		// Flush the final usage record before announcing vm.destroyed so the
+		// API can rely on the ordering: if a final record is coming, it's
+		// already durably stored in JetStream by the time vm.destroyed lands.
+		if instance.metering != nil {
+			stopCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			instance.metering.Stop(stopCtx)
+			cancel()
+		}
+
+		if err := os.RemoveAll(filepath.Join(runDirRoot, id)); err != nil {
+			slog.Warn("remove run dir failed", "vm_id", id, "err", err)
+		}
+
 		s.RemoveVirtualMachine(id)
 		s.Release(index)
 		slog.Info("VM exited and slot released", "vm_id", id, "slot", index)

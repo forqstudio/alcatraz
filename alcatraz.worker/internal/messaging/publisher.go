@@ -7,20 +7,29 @@ import (
 	"fmt"
 	"time"
 
+	"alcatraz.worker/internal/metering"
 	"github.com/nats-io/nats.go"
+	"github.com/nats-io/nats.go/jetstream"
 )
 
 // Publisher fires post-boot events back to anyone subscribed (alcatraz.api,
 // alcatraz.routes). It owns its own NATS connection rather than sharing the
 // subscriber's — Subscriber's lifecycle is tied to Stop/Drain and the publish
 // path uses Publish + Flush, so the two stay isolated.
+//
+// vm.ready and vm.destroyed travel over core NATS. vm.usage_sample and
+// vm.usage_final go through JetStream so the API can ack-after-DB-commit and
+// recover from outages without losing billing data.
 type Publisher struct {
-	nc               *nats.Conn
-	readySubject     string
-	destroyedSubject string
+	nc                  *nats.Conn
+	js                  jetstream.JetStream
+	readySubject        string
+	destroyedSubject    string
+	usageSampleSubject  string
+	usageFinalSubject   string
 }
 
-func NewPublisher(natsURL, readySubject, destroyedSubject string) (*Publisher, error) {
+func NewPublisher(natsURL, readySubject, destroyedSubject, usageSampleSubject, usageFinalSubject string) (*Publisher, error) {
 	if natsURL == "" {
 		return nil, errors.New("nats url is empty")
 	}
@@ -28,10 +37,18 @@ func NewPublisher(natsURL, readySubject, destroyedSubject string) (*Publisher, e
 	if err != nil {
 		return nil, fmt.Errorf("connect: %w", err)
 	}
+	js, err := jetstream.New(nc)
+	if err != nil {
+		_ = nc.Drain()
+		return nil, fmt.Errorf("jetstream: %w", err)
+	}
 	return &Publisher{
-		nc:               nc,
-		readySubject:     readySubject,
-		destroyedSubject: destroyedSubject,
+		nc:                 nc,
+		js:                 js,
+		readySubject:       readySubject,
+		destroyedSubject:   destroyedSubject,
+		usageSampleSubject: usageSampleSubject,
+		usageFinalSubject:  usageFinalSubject,
 	}, nil
 }
 
@@ -92,6 +109,36 @@ func (p *Publisher) PublishVMDestroyed(_ context.Context, id string) error {
 		return fmt.Errorf("publish vm.destroyed: %w", err)
 	}
 	return p.nc.Flush()
+}
+
+// PublishUsageSample publishes a periodic usage sample via JetStream. The
+// Nats-Msg-Id header lets the server dedupe redeliveries that occur inside
+// the stream's dedup window (default 2 minutes).
+func (p *Publisher) PublishUsageSample(ctx context.Context, payload metering.SamplePayload) error {
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("marshal vm.usage_sample: %w", err)
+	}
+	msgID := fmt.Sprintf("%s|%d", payload.SandboxID, payload.SampledAtUtc.UnixNano())
+	_, err = p.js.Publish(ctx, p.usageSampleSubject, data, jetstream.WithMsgID(msgID))
+	if err != nil {
+		return fmt.Errorf("publish vm.usage_sample: %w", err)
+	}
+	return nil
+}
+
+// PublishUsageFinal publishes the final usage record via JetStream. MsgID is
+// the sandbox UUID so JetStream dedupes any duplicate finals server-side.
+func (p *Publisher) PublishUsageFinal(ctx context.Context, payload metering.FinalPayload) error {
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("marshal vm.usage_final: %w", err)
+	}
+	_, err = p.js.Publish(ctx, p.usageFinalSubject, data, jetstream.WithMsgID(payload.SandboxID))
+	if err != nil {
+		return fmt.Errorf("publish vm.usage_final: %w", err)
+	}
+	return nil
 }
 
 func (p *Publisher) Close() error {

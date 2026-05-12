@@ -30,7 +30,7 @@ Conventions:
 - **Queue-group naming:** `<consumer>-<subject>`. `worker-vm-spawn`, `api-vm-ready`, etc.
 - **Fanout = no queue group.** `alcatraz.routes` subscribes without a group so every replica builds the full registry.
 - **Atomic publish via the outbox** ([ADR-0003](0003-transactional-outbox.md)) — `vm.spawn` is published exactly when a sandbox row exists.
-- **Core NATS, no JetStream consumers** ([ADR-0001](0001-core-nats-over-jetstream.md)) — the trade-offs and failure modes are documented there.
+- **Core NATS for lifecycle subjects, JetStream for billing subjects** ([ADR-0001](0001-core-nats-over-jetstream.md), [ADR-0012](0012-jetstream-for-billing-subjects.md)) — lifecycle uses the outbox for publish-side durability; billing has no outbox and so rides JetStream with explicit ack-after-DB-commit. Trade-offs and failure modes are documented in those ADRs.
 
 The full broker reference (every producer, consumer, contract, and configuration knob) lives in [`../nats-broker.md`](../nats-broker.md).
 

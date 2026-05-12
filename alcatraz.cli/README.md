@@ -37,6 +37,9 @@ alcatraz sandbox get <id>
 alcatraz sandbox delete <id>
 alcatraz sandbox ssh-cert <id> [--public-key PATH] [--out PATH]
 
+alcatraz usage           # list finalised usage records across your sandboxes
+alcatraz usage <id>      # one sandbox: live view while running, finalised once exited
+
 alcatraz ssh <id> [remote-command] [--no-proxy]
 ```
 
@@ -116,13 +119,14 @@ src/Alcatraz.Cli/
 │   ├── WhoAmI/                                   # alcatraz whoami
 │   │   ├── WhoAmICommand.cs
 │   │   └── JwtPayloadDecoder.cs
-│   ├── Sandboxes/                                # alcatraz sandbox <verb>
+│   ├── Sandboxes/                                # alcatraz sandbox <verb> + alcatraz usage
 │   │   ├── SandboxIdSettings.cs / SandboxResponse.cs / SandboxRenderer.cs   # shared at aggregate root
 │   │   ├── CreateSandbox/CreateSandboxCommand.cs + CreateSandboxSettings.cs
 │   │   ├── ListSandboxes/ListSandboxesCommand.cs
 │   │   ├── GetSandbox/GetSandboxCommand.cs
 │   │   ├── DeleteSandbox/DeleteSandboxCommand.cs
-│   │   └── IssueSshCertificate/IssueSshCertificateCommand.cs + Settings + SshCertificateResponse
+│   │   ├── IssueSshCertificate/IssueSshCertificateCommand.cs + Settings + SshCertificateResponse
+│   │   └── Usage/UsageCommand.cs + UsageSettings + SandboxUsageResponse + UsageRenderer
 │   └── Ssh/                                      # alcatraz ssh
 │       ├── SshCommand.cs / SshSettings.cs
 │       └── SshLauncher.cs

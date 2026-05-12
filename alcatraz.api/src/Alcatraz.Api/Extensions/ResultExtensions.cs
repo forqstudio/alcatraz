@@ -3,6 +3,7 @@ using Alcatraz.Application.Abstractions.Authentication;
 using Alcatraz.Application.Abstractions.Security;
 using Alcatraz.Domain.Abstractions;
 using Alcatraz.Domain.Sandboxes;
+using Alcatraz.Domain.Sandboxes.Usage;
 using Microsoft.AspNetCore.Mvc;
 
 namespace Alcatraz.Api.Extensions;
@@ -11,7 +12,7 @@ internal static class ResultExtensions
 {
     public static IActionResult ToFailureActionResult(this Error error)
     {
-        if (error == SandboxErrors.NotFound)
+        if (error == SandboxErrors.NotFound || error == SandboxUsageErrors.SandboxNotFound)
         {
             return new NotFoundResult();
         }

@@ -1,6 +1,7 @@
 using Alcatraz.Cli.Commands.Login;
 using Alcatraz.Cli.Commands.Sandboxes;
 using Alcatraz.Cli.Commands.Sandboxes.IssueSshCertificate;
+using Alcatraz.Cli.Commands.Sandboxes.Usage;
 
 namespace Alcatraz.Cli.Common.Api;
 
@@ -24,4 +25,8 @@ public interface IAlcatrazApiClient
         Guid sandboxId,
         string sshPublicKey,
         CancellationToken ct = default);
+
+    Task<SandboxUsageResponse> GetSandboxUsageAsync(Guid sandboxId, CancellationToken ct = default);
+
+    Task<IReadOnlyList<SandboxUsageResponse>> ListSandboxUsageAsync(CancellationToken ct = default);
 }
