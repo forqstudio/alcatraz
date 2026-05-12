@@ -40,7 +40,7 @@ Letting an AI coding agent loose on your laptop is a bad idea. Alcatraz gives ea
 
 ## Key features
 
-### For the SSH user
+### For the end user
 
 - Stock `ssh` — no plugin, no proxy daemon. The CLI just execs OpenSSH with a cert.
 - 24-hour user certificates scoped to a single sandbox UUID; expiry is the revocation primitive.
@@ -409,7 +409,7 @@ The load-bearing ones at deploy time:
 | `Gateway__Host`, `Gateway__Port` | `alcatraz.api` | When set, the cert-issue response carries this `(host, port)` instead of the worker-reported VM endpoint. Unset = local-dev direct-to-VM mode. |
 | `Ssh__CA__PrivateKeyPath` | `alcatraz.api` | Path to the SSH CA private key inside the API container. Defaults to `/run/alcatraz-ca/alcatraz_ca` (mounted from the `alcatraz_ca` volume). |
 | `Nats__Url` / `NATS_URL` | `alcatraz.api`, `alcatraz.routes` | NATS endpoint. |
-| `WORKER_CA_PUBKEY_PATH` | `alcatraz.worker` | Host path to the API's CA pubkey; the worker plants it into each VM's overlay. |
+| `WORKER_CA_PUBKEY_PATH` | `alcatraz.worker` | Host path to the API's CA pubkey; the worker reads it once at startup and embeds it (base64) on each VM's kernel cmdline. |
 
 ### Production considerations
 

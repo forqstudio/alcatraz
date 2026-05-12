@@ -11,7 +11,7 @@ This repository contains the build and launch scripts only. Generated artifacts 
 - NATS: `2.10` (with JetStream)
 - Seq: `2024.3` (structured log viewer; receives CLEF events from the worker)
 - Firecracker target: `v1.15.1`
-- AgentFS: in-process via the Go SDK (`github.com/tursodatabase/agentfs/sdk/go`); no `agentfs` CLI binary required. The SDK is vendored at `third_party/agentfs-sdk-go/` with one local patch (overlay parent-dir copy-up) — see [`third_party/agentfs-sdk-go/UPSTREAM.md`](../third_party/agentfs-sdk-go/UPSTREAM.md) for why and how to bump it.
+- AgentFS: in-process via the Go SDK (`github.com/tursodatabase/agentfs/sdk/go`); no `agentfs` CLI binary required. The SDK is resolved via a local-path `replace` directive in `go.mod` pointing at a sibling checkout of `github.com/tursodatabase/agentfs`.
 - NFSv3 server: in-process via `github.com/willscott/go-nfs`
 - Logging: `log/slog` (stdlib) fanned out to stdout + Seq via a small CLEF HTTP handler in `internal/logging`
 
@@ -21,11 +21,11 @@ This repository contains the build and launch scripts only. Generated artifacts 
 2. On VM request, worker allocates an available slot
 3. Worker configures `CNIConfiguration` for the Firecracker SDK; on VM start, the SDK invokes CNI plugins (bridge, host-local IPAM, tc-redirect-tap) which handle TAP creation, IP allocation, and NAT automatically
 4. Worker initializes or reuses an AgentFS overlay in `.agentfs/<agent-id>.db` via the AgentFS Go SDK (no subprocess)
-5. Worker plants two boot-time files into the AgentFS overlay before VM start:
-   - `/etc/ssh/auth_principals/al` ← the sandbox UUID, so sshd accepts certs whose principal matches
-   - `/etc/ssh/trusted_user_ca_keys` ← contents of `WORKER_CA_PUBKEY_PATH` (the API's SSH CA pubkey)
+5. Worker appends two SSH cert-auth args to the Firecracker kernel cmdline:
+   - `alcatraz.agent_id=<sandbox-uuid>` ← the cert principal sshd must accept for this VM
+   - `alcatraz.ca_pubkey=<base64>` ← contents of `WORKER_CA_PUBKEY_PATH` (the API's SSH CA pubkey), read once at worker startup
 
-   Spawn aborts on write failure.
+   The guest's `/init` parses both args from `/proc/cmdline` and materialises them in tmpfs at `/run/ssh-config/{auth_principals/al,trusted_user_ca_keys}` before sshd starts. No pre-boot overlay writes happen on the worker host side.
 6. Worker starts an in-process NFSv3 server bound to the bridge gateway IP, exporting the overlay (host rootfs as read-only base layer + per-VM SQLite delta)
 7. Worker spawns Firecracker VM with `root=/dev/nfs` pointing to that NFS export
 8. After Firecracker reports started, worker probes `vm_ip:22` until sshd accepts (10s timeout) and publishes `vm.ready` on NATS with `{id, host, port}`. `alcatraz.api` consumes this event and transitions the sandbox to `Running`; `alcatraz.routes` (when present) updates Traefik's route table.
@@ -172,7 +172,7 @@ an error.
 | `NATS_DESTROYED_SUBJECT` | `vm.destroyed` | Subject the worker publishes to after VM exit + cleanup |
 | `NATS_DESTROY_SUBJECT` | `vm.destroy` | Subject the worker subscribes to for delete requests from the API |
 | `NATS_DESTROY_QUEUE_GROUP` | `worker-vm-destroy` | NATS queue group for `vm.destroy` consumers |
-| `WORKER_CA_PUBKEY_PATH` | `/run/alcatraz-ca/alcatraz_ca.pub` | API's SSH CA pubkey, planted into each VM's overlay |
+| `WORKER_CA_PUBKEY_PATH` | `/run/alcatraz-ca/alcatraz_ca.pub` | API's SSH CA pubkey; read once at worker startup and embedded (base64) in each VM's kernel cmdline |
 | `WORKER_FIRECRACKER_BIN` | `<repo>/alcatraz.core/bin/firecracker-v1.15.1` | Firecracker binary. Default derived from `os.Executable()` (binary at `<repo>/alcatraz.worker/bin/alcatraz-worker` → core dir is the sibling of `alcatraz.worker/`). Override for non-standard layouts. |
 | `WORKER_KERNEL_PATH` | `<repo>/alcatraz.core/linux-amazon/vmlinux` | Guest kernel image. Same anchoring as above. |
 | `WORKER_ROOTFS_PATH` | `<repo>/alcatraz.core/rootfs` | Guest rootfs base image (read-only; per-VM overlay is layered on top). |

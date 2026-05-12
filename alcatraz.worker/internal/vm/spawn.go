@@ -2,6 +2,7 @@ package vm
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
 	"log/slog"
 	"net"
@@ -20,10 +21,10 @@ type SpawnOptions struct {
 	Rootfs         string
 	Kernel         string
 	AgentfsData    string
-	// CAPubkeyPath is read on every spawn and written into the AgentFS overlay
-	// at /etc/ssh/trusted_user_ca_keys, so sshd inside the VM accepts certs
-	// signed by alcatraz.api's CA. If empty or unreadable, spawn aborts.
-	CAPubkeyPath string
+	// CAPubkey is the API's SSH CA public key, read once at worker startup.
+	// It rides on the kernel cmdline as base64 and is materialised into a
+	// tmpfs at /run/ssh-config/trusted_user_ca_keys by the guest's /init.
+	CAPubkey []byte
 	// Publisher fires vm.ready after boot (and the post-exit cleanup goroutine
 	// fires vm.destroyed). Optional — if nil, no events are published.
 	Publisher *messaging.Publisher
@@ -92,26 +93,26 @@ func Spawn(
 		"data", spawnOptions.AgentfsData,
 	)
 
-	// Plant the auth_principals + trusted_user_ca_keys files into the overlay
-	// before the VM boots. sshd reads these at startup; the cert principal is
-	// the sandbox UUID and the CA pubkey gates which signers it accepts.
-	if err := writeOverlayBootFiles(ctx, instance.agentID, spawnOptions.Rootfs, spawnOptions.AgentfsData, spawnOptions.CAPubkeyPath); err != nil {
-		return nil, fmt.Errorf("write overlay boot files: %w", err)
-	}
-	slog.Info("VM ssh trust files written into overlay", "vm_id", instance.id)
-
 	// The CNI host-local IPAM gateway is the first IP in SubnetCIDR. We set it
 	// before m.Start so the AppendAfter(SetupNetwork) handler below can read
 	// instance.hostTapIP when it binds the NFS listener. The post-Start block
 	// re-reads the gateway from the CNI result so the value is authoritative.
 	instance.SetHostTapIP(GatewayIP)
 
+	// SSH cert config rides on the kernel cmdline: the sandbox UUID is the
+	// cert principal sshd must accept (AuthorizedPrincipalsFile) and the CA
+	// pubkey gates which signers it trusts (TrustedUserCAKeys). The guest's
+	// /init parses these args and writes them into /run/ssh-config (tmpfs)
+	// before sshd starts.
+	caPubkeyB64 := base64.StdEncoding.EncodeToString(spawnOptions.CAPubkey)
 	bootArgs := fmt.Sprintf(
-		"console=ttyS0 reboot=k panic=1 pci=off %s root=/dev/nfs nfsroot=%s:/,nfsvers=3,tcp,nolock,port=%d,mountport=%d rw init=/init",
+		"console=ttyS0 reboot=k panic=1 pci=off %s root=/dev/nfs nfsroot=%s:/,nfsvers=3,tcp,nolock,port=%d,mountport=%d rw init=/init alcatraz.agent_id=%s alcatraz.ca_pubkey=%s",
 		instance.kernelArgs,
 		GatewayIP,
 		instance.nfsPort,
 		instance.nfsPort,
+		instance.agentID,
+		caPubkeyB64,
 	)
 
 	cfg := firecracker.Config{
@@ -250,35 +251,6 @@ func Spawn(
 
 	success = true
 	return instance, nil
-}
-
-// writeOverlayBootFiles plants /etc/ssh/auth_principals/al (sandbox UUID) and
-// /etc/ssh/trusted_user_ca_keys (alcatraz.api's CA pubkey) into the AgentFS
-// overlay so the rootfs's sshd accepts the cert pipeline. It opens the overlay
-// just for these writes — OpenAndServe (called later by the StartNFS handler)
-// reopens against the same SQLite file and sees the committed writes.
-func writeOverlayBootFiles(ctx context.Context, agentID, rootfs, dataDir, caPubkeyPath string) error {
-	if caPubkeyPath == "" {
-		return fmt.Errorf("CAPubkeyPath is empty; set WORKER_CA_PUBKEY_PATH")
-	}
-	caPub, err := os.ReadFile(caPubkeyPath)
-	if err != nil {
-		return fmt.Errorf("read CA pubkey from %s: %w", caPubkeyPath, err)
-	}
-
-	handle, err := agentfs.OpenOverlay(ctx, agentID, rootfs, dataDir)
-	if err != nil {
-		return fmt.Errorf("open overlay for boot writes: %w", err)
-	}
-	defer handle.Close()
-
-	if err := handle.WriteFile(ctx, "/etc/ssh/auth_principals/al", []byte(agentID+"\n"), 0o644); err != nil {
-		return err
-	}
-	if err := handle.WriteFile(ctx, "/etc/ssh/trusted_user_ca_keys", caPub, 0o644); err != nil {
-		return err
-	}
-	return nil
 }
 
 // waitForSshd dials host:port until it accepts or the timeout elapses. Used to

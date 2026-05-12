@@ -1,12 +1,12 @@
 # CA pubkey sync — why and how
 
-The worker plants the API's SSH CA *public* key into every per-sandbox AgentFS overlay before VM boot. The sync script (`alcatraz.worker/scripts/sync-ca-pubkey.sh`) copies that pubkey out of the `alcatraz_ca` Docker volume to `/run/alcatraz-ca/alcatraz_ca.pub` on the host, where the worker can read it. This doc explains the design choices behind that pipeline.
+The worker embeds the API's SSH CA *public* key on every VM's kernel cmdline (base64-encoded) at spawn time; the guest's `/init` materialises it in tmpfs at `/run/ssh-config/trusted_user_ca_keys` before sshd starts. The sync script (`alcatraz.worker/scripts/sync-ca-pubkey.sh`) copies that pubkey out of the `alcatraz_ca` Docker volume to `/run/alcatraz-ca/alcatraz_ca.pub` on the host, where the worker reads it once at startup. This doc explains the design choices behind that pipeline.
 
 ## Why the worker needs the pubkey at all
 
 `alcatraz.api` is the SSH certificate authority. It holds an ed25519 *private* key (mounted from the `alcatraz_ca` Docker volume) and uses it to sign 24-hour OpenSSH user certificates the CLI presents to a sandbox's `sshd`.
 
-For `sshd` to trust those certs, every VM needs the matching *public* key planted in `/etc/ssh/trusted_user_ca_keys` before boot. The worker is the component that writes that file into each per-sandbox overlay — so the worker, not the API, is the one that needs the pubkey on disk.
+For `sshd` to trust those certs, every VM needs the matching *public* key planted at `/run/ssh-config/trusted_user_ca_keys` before boot. The worker is the component that puts that file in place — by appending the pubkey (base64) to the Firecracker kernel cmdline as `alcatraz.ca_pubkey=…`, which the guest's `/init` decodes into tmpfs. So the worker, not the API, is the one that needs the pubkey on disk.
 
 ## Why a host-side sync (and not a shared volume)
 
@@ -47,9 +47,6 @@ The worker is the only process whose job depends on the *public* key existing on
 4. The API issues a cert when the customer asks for one.
 5. Only the customer's first SSH attempt fails — silently, with a generic `Permission denied (publickey)`.
 
-That's the worst-case failure mode: looks healthy, isn't, customer hits it last. To prevent it:
+That's the worst-case failure mode: looks healthy, isn't, customer hits it last. To prevent it, the worker reads the file once at startup and refuses to start if it's missing or unreadable (`alcatraz.worker/cmd/alcatraz-worker/main.go:52`). The pubkey bytes are held in memory and embedded into every spawn's kernel cmdline — no per-spawn re-read, no per-spawn failure surface.
 
-- The worker checks the file at startup and refuses to start if it's missing (`alcatraz.worker/cmd/alcatraz-worker/main.go:38-45`).
-- The spawn path double-checks at every claim (`alcatraz.worker/internal/vm/spawn.go:247`).
-
-Either failure surfaces immediately to the operator, not silently to the customer.
+The startup failure surfaces immediately to the operator, not silently to the customer.

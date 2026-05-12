@@ -245,11 +245,13 @@ chroot_run "install -d -m 0755 /etc/ssh/sshd_config.d"
 # Cert auth is the customer-facing path:
 #   - sshd validates user certs signed by alcatraz.api's CA (TrustedUserCAKeys)
 #   - a cert principal must appear in AuthorizedPrincipalsFile to be accepted
-# The worker writes both files into the AgentFS overlay at spawn:
-#   /etc/ssh/trusted_user_ca_keys  ← API's CA pubkey (gates which signers we trust)
-#   /etc/ssh/auth_principals/al    ← sandbox UUID (gates which cert is for THIS VM)
-# Empty stubs are pre-created at build so sshd starts cleanly even on a bare
-# rootfs boot; the worker's overlay write replaces them per-VM.
+# Both files live in /run/ssh-config (tmpfs, per-VM) and are written by /init
+# from kernel cmdline args the worker passes at spawn:
+#   alcatraz.agent_id=<uuid>            → /run/ssh-config/auth_principals/al
+#   alcatraz.ca_pubkey=<base64-pubkey>  → /run/ssh-config/trusted_user_ca_keys
+# Dev VMs (firecracker.sh) don't pass these and rely on authorized_keys auth;
+# sshd will log a one-line "Could not open ..." warning at startup which is
+# expected on that path.
 sudo tee "${ROOTFS_DIR}/etc/ssh/sshd_config.d/alcatraz.conf" >/dev/null <<EOF
 PasswordAuthentication no
 PubkeyAuthentication yes
@@ -258,14 +260,9 @@ PermitRootLogin no
 UsePAM no
 X11Forwarding no
 PrintMotd no
-TrustedUserCAKeys /etc/ssh/trusted_user_ca_keys
-AuthorizedPrincipalsFile /etc/ssh/auth_principals/%u
+TrustedUserCAKeys /run/ssh-config/trusted_user_ca_keys
+AuthorizedPrincipalsFile /run/ssh-config/auth_principals/%u
 EOF
-sudo install -d -m 0755 "${ROOTFS_DIR}/etc/ssh/auth_principals"
-sudo touch "${ROOTFS_DIR}/etc/ssh/auth_principals/${VM_USER}"
-sudo chmod 0644 "${ROOTFS_DIR}/etc/ssh/auth_principals/${VM_USER}"
-sudo touch "${ROOTFS_DIR}/etc/ssh/trusted_user_ca_keys"
-sudo chmod 0644 "${ROOTFS_DIR}/etc/ssh/trusted_user_ca_keys"
 chroot_run "ssh-keygen -A"
 # .ssh dir is created with correct perms here so the guest can write into it
 # at boot (e.g. firecracker.sh plants authorized_keys into the per-VM overlay
@@ -363,6 +360,29 @@ install -d -m 0700 /run/ssh-hostkeys
 [ -f /run/ssh-hostkeys/ssh_host_rsa_key ] || ssh-keygen -q -N '' -t rsa -f /run/ssh-hostkeys/ssh_host_rsa_key
 [ -f /run/ssh-hostkeys/ssh_host_ecdsa_key ] || ssh-keygen -q -N '' -t ecdsa -f /run/ssh-hostkeys/ssh_host_ecdsa_key
 [ -f /run/ssh-hostkeys/ssh_host_ed25519_key ] || ssh-keygen -q -N '' -t ed25519 -f /run/ssh-hostkeys/ssh_host_ed25519_key
+
+# Plant per-VM SSH cert config from kernel cmdline. The worker passes
+# alcatraz.agent_id=<uuid> (the cert principal sshd must accept for this VM)
+# and alcatraz.ca_pubkey=<base64> (the CA pubkey sshd trusts as signer).
+# /run/ssh-config is tmpfs; sshd_config points at it via TrustedUserCAKeys
+# and AuthorizedPrincipalsFile. Dev VMs that don't pass these args see sshd
+# log one-line warnings at startup; pubkey auth via authorized_keys still
+# works on that path.
+install -d -m 0755 /run/ssh-config /run/ssh-config/auth_principals
+for arg in \$(cat /proc/cmdline); do
+    case "\$arg" in
+        alcatraz.agent_id=*)
+            printf '%s\n' "\${arg#alcatraz.agent_id=}" \
+                > /run/ssh-config/auth_principals/al
+            chmod 0644 /run/ssh-config/auth_principals/al
+            ;;
+        alcatraz.ca_pubkey=*)
+            printf '%s' "\${arg#alcatraz.ca_pubkey=}" | base64 -d \
+                > /run/ssh-config/trusted_user_ca_keys
+            chmod 0644 /run/ssh-config/trusted_user_ca_keys
+            ;;
+    esac
+done
 
 cat /etc/motd
 echo

@@ -46,8 +46,11 @@ func main() {
 
 	// Fail fast at startup rather than on first spawn. /run is tmpfs, so the
 	// pubkey disappears across host reboots; without this check, sandboxes
-	// silently get stuck in Provisioning.
-	if _, err := os.ReadFile(caPubkeyPath); err != nil {
+	// silently get stuck in Provisioning. The bytes are read once here and
+	// threaded through SpawnOptions — every spawn embeds them (base64'd) in
+	// the kernel cmdline, so we never re-read the file per VM.
+	caPubkey, err := os.ReadFile(caPubkeyPath)
+	if err != nil {
 		logging.Fatal(
 			"CA pubkey not readable — run alcatraz.worker/scripts/sync-ca-pubkey.sh "+
 				"(/run is tmpfs and is wiped on host reboot)",
@@ -84,7 +87,7 @@ func main() {
 		Rootfs:         vmConfig.Rootfs,
 		Kernel:         vmConfig.Kernel,
 		AgentfsData:    vmConfig.AgentfsData,
-		CAPubkeyPath:   caPubkeyPath,
+		CAPubkey:       caPubkey,
 		Publisher:      publisher,
 	}
 

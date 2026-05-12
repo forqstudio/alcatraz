@@ -12,7 +12,7 @@ require (
 	github.com/willscott/go-nfs v0.0.3
 )
 
-replace github.com/tursodatabase/agentfs/sdk/go => ../third_party/agentfs-sdk-go
+replace github.com/tursodatabase/agentfs/sdk/go => /home/dev/Workspace/agentfs/sdk/go
 
 require (
 	github.com/PuerkitoBio/purell v1.1.1 // indirect

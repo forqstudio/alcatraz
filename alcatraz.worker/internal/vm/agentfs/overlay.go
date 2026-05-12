@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"path"
 	"path/filepath"
 
 	sdk "github.com/tursodatabase/agentfs/sdk/go"
@@ -52,26 +51,6 @@ func (h *OverlayHandle) Close() error {
 		return nil
 	}
 	return h.agentFS.Close()
-}
-
-// WriteFile writes data into the overlay at path, creating any missing parent
-// directories with mode 0755. The leaf file mode comes from `mode`.
-//
-// Intended for the spawn pipeline: open the overlay between PrepareOverlay and
-// m.Start, write boot-time config files (auth_principals, trusted_user_ca_keys),
-// then close. Calling this while the NFS server is already serving the overlay
-// from the same DB is unsupported.
-func (h *OverlayHandle) WriteFile(ctx context.Context, p string, data []byte, mode os.FileMode) error {
-	dir := path.Dir(p)
-	if dir != "" && dir != "." && dir != "/" {
-		if err := h.overlay.MkdirAll(ctx, dir, int64(sdk.S_IFDIR|0o755)); err != nil {
-			return fmt.Errorf("mkdir %s: %w", dir, err)
-		}
-	}
-	if err := h.overlay.WriteFile(ctx, p, data, int64(sdk.S_IFREG|(mode&0o7777))); err != nil {
-		return fmt.Errorf("write %s: %w", p, err)
-	}
-	return nil
 }
 
 // PrepareOverlay replaces `agentfs init --force --base <rootfs> <id>`.
